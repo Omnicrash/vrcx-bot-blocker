@@ -46,9 +46,7 @@ restart VRCX.
   `~/Library/Application Support/VRCX Bot Blocker`.
 - **Linux:** run the installer again with `--uninstall`.
 
-Each removes only the bot blocker and leaves anything else you've added to VRCX alone. VRCX
-restarts if it's running. Players it already blocked stay blocked. You can unblock them in
-VRChat, or in VRCX under the player's profile.
+Players it already blocked stay blocked.
 
 ## Blocking groups
 
