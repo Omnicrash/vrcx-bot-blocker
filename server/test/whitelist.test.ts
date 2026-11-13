@@ -57,7 +57,7 @@ test('the review sees new items, can decide clear group cases and recommend the 
 
     await api(`/api/groups/${GROUPIE}`, { verdict: 'approve', reasoning: 'Sells cheats.', decide: false })
         const page = await (await admin.request('/', { headers: { ...TEST_USER, Host: 'xdisk:3061' } })).text()
-    expect(page).toContain('Review suggests <b>approve</b>: Sells cheats.')
+    expect(page).toContain('<b>Review suggests approving.</b> Sells cheats.')
 
     await api(`/api/groups/${GROUPIE}`, { verdict: 'approve', decide: true })
     expect((await list()).added.map((e) => e.userId)).toContain(GROUPIE)

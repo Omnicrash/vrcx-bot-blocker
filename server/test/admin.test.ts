@@ -66,7 +66,7 @@ test('changing the rules shows a preview first, and applies only when confirmed'
     // Require all three signs: the newbie would drop off.
     const strict = { name: 'on', robot: 'on', age: 'on', needed: '3', ageDays: '7' }
     const preview = await (await form('/rules/preview', strict)).text()
-    expect(preview).toMatch(/Removes <b>1<\/b>/)
+    expect(preview).toMatch(/<b>Removes 1\.<\/b>/)
     expect((await ids()).map((e) => e.userId)).toContain(NEWBIE) // nothing applied yet
     await form('/rules/apply', strict)
     const after = (await ids()).map((e) => e.userId)
