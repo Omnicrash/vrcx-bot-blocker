@@ -1393,12 +1393,22 @@
         if (icon) {
             icon.className = icon.className.replace(/\bri-[a-z0-9-]+/g, '').trim() + ' ri-robot-2-line';
         }
-        // The name is the first bit of text in the entry.
+        // The name is the first bit of text in the entry. Any other text came with the copied
+        // entry (Direct Access shows its Ctrl D shortcut) and goes.
         const walker = document.createTreeWalker(entry, NodeFilter.SHOW_TEXT);
+        let name = null;
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
             if (node.nodeValue.trim()) {
+                name = node;
                 node.nodeValue = 'Bot Blocker';
                 break;
+            }
+        }
+        if (name) {
+            for (const el of [...entry.querySelectorAll('*')]) {
+                if (entry.contains(el) && el.textContent.trim() && !el.contains(name)) {
+                    el.remove();
+                }
             }
         }
         entry.querySelectorAll('[title]').forEach((el) => (el.title = 'Bot Blocker'));
