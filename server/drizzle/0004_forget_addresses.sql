@@ -1,0 +1,1 @@
+UPDATE `reports` SET `ip` = '';

@@ -1,7 +1,8 @@
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
-// Every report as it came in, kept for good. The install id and address are stored as hashes:
-// they count reporters apart and enforce limits, nothing traces them back to a person.
+// Every report as it came in, kept for good. The install id (a random id the plugin made up) is
+// stored as a hash, to tell reporters apart. Addresses aren't stored: `ip` stays empty, the rate
+// limit counts them in memory only.
 // `caughtBy` is research data only (which of the reporter's own rules fired); no decision reads it.
 export const reports = sqliteTable(
     'reports',

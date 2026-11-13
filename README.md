@@ -121,7 +121,10 @@ earlier are sent once as well, a few at a time.
 What leaves your computer: the blocked player's ID and display name, what the plugin saw (default
 name, Robot avatar, Visitor rank, account age, a word from the bio), which of your rules caught
 them, and a random ID this install made up for itself. Nothing about you or your VRChat account.
-The server keeps the install ID and your address only as scrambled hashes, for rate limits. It
+The bot blocker doesn't store your address: it only counts requests per address in memory, for
+a rate limit, and forgets them within the hour. Like any website, the web server in front of it
+keeps standard access logs (which include addresses) for 30 days, and uses them to block abusive
+traffic. It
 keeps the reports, and what it saw of each reported player, including their profile text, for
 good, so it can apply changed rules to the whole list again.
 
@@ -134,7 +137,7 @@ The shared list exists to stop spam, scraping and harassment bots in VRChat. To 
 server stores the reports plugins send and what it saw when it looked the reported players up on
 VRChat: their account ID, display name, profile text, trust rank, account age and whether they
 wore the Robot avatar. It keeps this for as long as the list exists, so changed rules can be
-applied to everyone again. Reporters are stored only as scrambled hashes.
+applied to everyone again. Of the reporters it keeps only the random install ID.
 
 A daily review looks at newly listed players. Anyone who turns out to be a real person is
 **whitelisted**: taken off the list for every user, their blocks from the list undone, and

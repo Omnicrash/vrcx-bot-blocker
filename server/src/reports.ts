@@ -220,7 +220,7 @@ export function reevaluate() {
 
 export type Received = 'queued' | 'review' | 'known' | 'below minimum' | 'whitelisted'
 
-export function receive(r: { userId: string; displayName: string; grounds: Grounds; caughtBy?: unknown; install: string; ip: string }): Received {
+export function receive(r: { userId: string; displayName: string; grounds: Grounds; caughtBy?: unknown; install: string }): Received {
     if (isWhitelisted(r.userId)) {
         return 'whitelisted' // cleared as a real person: not stored at all
     }
@@ -237,7 +237,7 @@ export function receive(r: { userId: string; displayName: string; grounds: Groun
             grounds: r.grounds,
             caughtBy: r.caughtBy ?? null,
             install: hash(r.install),
-            ip: hash(r.ip),
+            ip: '', // not kept: the rate limit counts addresses in memory only
             receivedAt: Date.now(),
             outcome: forReview ? 'review' : !worth ? 'below' : known ? 'checked' : 'pending'
         })

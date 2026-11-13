@@ -63,7 +63,7 @@ app.post('/v1/reports', async (c) => {
         return c.json({ error: 'too many reports' }, 429)
     }
     const caughtBy = JSON.stringify(r.caughtBy ?? null).length <= 2000 ? r.caughtBy : null
-    return c.json({ result: receive({ ...r, caughtBy, ip }) })
+    return c.json({ result: receive({ ...r, caughtBy }) })
 })
 
 app.get('/v1/list', (c) => {
