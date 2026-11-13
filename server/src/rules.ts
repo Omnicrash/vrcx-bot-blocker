@@ -11,11 +11,44 @@ export interface Grounds {
     nuisance?: boolean
     probable?: boolean
     age?: number
+    // A block for being in one of the reporter's groups. Never listed automatically: these wait
+    // for a person to approve them on the management page.
+    group?: string
+    groupId?: string
+    reviewed?: boolean
 }
 
-// The default rule set is the minimum: the three bot signs together, or a bio word, or Nuisance.
-export function meetsMinimum(g: Grounds): boolean {
-    return (!!g.name && !!g.robot && !!g.visitor) || !!g.bio || !!g.nuisance
+// What the server needs before it lists a player, set on the management page. Like the plugin's
+// rules: every rule that's on without "always" has to hold, or any rule that's on with "always".
+export const RULE_NAMES = ['name', 'robot', 'visitor', 'bio', 'nuisance', 'probable', 'age'] as const
+export type RuleName = (typeof RULE_NAMES)[number]
+export interface ServerRules {
+    rules: Record<RuleName, { on: boolean; always: boolean }>
+    ageDays: number
+    bioWords: string[]
+}
+
+// The defaults match the plugin's default rule set.
+export const DEFAULT_RULES: ServerRules = {
+    rules: {
+        name: { on: true, always: false },
+        robot: { on: true, always: false },
+        visitor: { on: true, always: false },
+        bio: { on: true, always: true },
+        nuisance: { on: true, always: true },
+        probable: { on: false, always: true },
+        age: { on: false, always: true }
+    },
+    ageDays: 7,
+    bioWords: ['hexed.cc']
+}
+
+export function meetsRules(g: Grounds, r: ServerRules): boolean {
+    const holds = (k: RuleName) => (k === 'age' ? g.age !== undefined && g.age < r.ageDays : !!g[k])
+    const on = RULE_NAMES.filter((k) => r.rules[k].on)
+    const alone = on.filter((k) => r.rules[k].always)
+    const together = on.filter((k) => !r.rules[k].always)
+    return alone.some(holds) || (together.length > 0 && together.every(holds))
 }
 
 // VRChat's default display name: a word, a space, then the last 4 hex digits of the user id.
@@ -43,6 +76,7 @@ export interface Profile {
     statusDescription?: string
     iconUrl?: string
     tags?: string[]
+    date_joined?: string
 }
 
 // The first word from the list the profile's free text mentions, or null. The bots advertise in
@@ -71,5 +105,8 @@ export function verifiedGrounds(claimed: Grounds, user: Profile, bioWords: strin
     }
     if (claimed.nuisance && tags.includes('system_troll')) out.nuisance = true
     if (claimed.probable && tags.includes('system_probable_troll')) out.probable = true
+    if (claimed.age !== undefined && user.date_joined) {
+        out.age = Math.max(0, Math.floor((Date.now() - Date.parse(user.date_joined)) / 86_400_000))
+    }
     return out
 }

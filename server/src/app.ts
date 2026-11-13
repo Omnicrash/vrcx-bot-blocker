@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { z } from 'zod'
 import { LIMIT_PER_INSTALL, LIMIT_PER_IP, LIST_PAGE, VERSION } from './config'
-import { changesSince, counts, receive } from './reports'
+import { changesSince, counts, receive, serverRules } from './reports'
 import { loginState } from './vrchat'
 
 export const app = new Hono()
@@ -22,7 +22,9 @@ const report = z.object({
             bio: z.string().max(100).optional(),
             nuisance: z.boolean().optional(),
             probable: z.boolean().optional(),
-            age: z.number().int().min(0).max(100000).optional()
+            age: z.number().int().min(0).max(100000).optional(),
+            group: z.string().max(100).optional(),
+            groupId: z.string().regex(/^grp_[0-9a-f-]{36}$/).optional()
         })
         .strict()
 })
@@ -65,6 +67,12 @@ app.post('/v1/reports', async (c) => {
 app.get('/v1/list', (c) => {
     const since = Math.max(0, Number(c.req.query('since') ?? 0) || 0)
     return c.json(changesSince(since, LIST_PAGE))
+})
+
+// What the server accepts, so plugins only report what can be listed.
+app.get('/v1/rules', (c) => {
+    const { rules, ageDays } = serverRules()
+    return c.json({ rules, ageDays })
 })
 
 app.get('/healthz', (c) => c.json({ version: VERSION, vrchat: loginState, ...counts() }))

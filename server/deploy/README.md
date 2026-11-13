@@ -14,6 +14,13 @@ Only committed work ships. A restart pauses the API for a few seconds; plugins k
 queued and sync again on their own. `/healthz` reports the version, the VRChat login state, how
 many accounts are listed and how many reports wait for a check.
 
+## Management page
+
+`http://192.168.1.10:3061` from the home network: group reports waiting for review, the acceptance
+rules (what the server needs before it lists a player), and the shared list with a Remove button.
+Its port is published by the container but never forwarded or proxied, and the page also refuses
+any address that isn't private. No login.
+
 ## One-time setup
 
 - **Data:** `/mnt/user/appdata/vrcx-bot-blocker`, owned by `1002:100` (the container's user).

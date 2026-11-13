@@ -4,6 +4,9 @@ const env = process.env
 // Set by the image build (deploy/Dockerfile); /healthz reports it.
 export const VERSION = env.VAPI_VERSION ?? 'dev'
 export const PORT = Number(env.VAPI_PORT ?? 3060)
+// The management page (reviewing group reports, taking entries off the list). Its port is only
+// published on the LAN, and the page itself refuses anything but private addresses.
+export const ADMIN_PORT = Number(env.VAPI_ADMIN_PORT ?? 3061)
 
 // The VRChat account the server looks players up with (an authenticator secret, so it can log
 // in unattended). Empty: the server takes reports but can't verify them yet.

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { bioMention, hasDefaultName, meetsMinimum, ROBOT_ICON, verifiedGrounds } from '../src/rules'
+import { bioMention, DEFAULT_RULES, hasDefaultName, meetsRules, ROBOT_ICON, verifiedGrounds } from '../src/rules'
 import { totp } from '../src/vrchat'
 
 test('default display name ends in the last 4 hex digits of the user id', () => {
@@ -21,12 +21,25 @@ test('bio words: websites match their disguised spellings, keywords match as wri
     expect(bioMention({ statusDescription: 'hexed dot cc' }, words)).toBe('hexed.cc')
 })
 
-test('the minimum is the default rule set', () => {
-    expect(meetsMinimum({ name: true, robot: true, visitor: true })).toBe(true)
-    expect(meetsMinimum({ name: true, visitor: true })).toBe(false)
-    expect(meetsMinimum({ bio: 'hexed.cc' })).toBe(true)
-    expect(meetsMinimum({ nuisance: true })).toBe(true)
-    expect(meetsMinimum({ probable: true, age: 1 })).toBe(false)
+test('the default acceptance rules: the three bot signs together, a bio word, or Nuisance', () => {
+    const meets = (g: object) => meetsRules(g, DEFAULT_RULES)
+    expect(meets({ name: true, robot: true, visitor: true })).toBe(true)
+    expect(meets({ name: true, visitor: true })).toBe(false)
+    expect(meets({ bio: 'hexed.cc' })).toBe(true)
+    expect(meets({ nuisance: true })).toBe(true)
+    expect(meets({ probable: true, age: 1 })).toBe(false)
+})
+
+test('changed acceptance rules: Almost Nuisance alone, and new accounts together with a default name', () => {
+    const r = structuredClone(DEFAULT_RULES)
+    r.rules.probable = { on: true, always: true }
+    r.rules.robot.on = false
+    r.rules.visitor.on = false
+    r.rules.age = { on: true, always: false }
+    r.ageDays = 3
+    expect(meetsRules({ probable: true }, r)).toBe(true)
+    expect(meetsRules({ name: true, age: 1 }, r)).toBe(true)
+    expect(meetsRules({ name: true, age: 5 }, r)).toBe(false)
 })
 
 test('only grounds that still hold survive the re-check', () => {

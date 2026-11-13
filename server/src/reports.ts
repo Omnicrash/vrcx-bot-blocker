@@ -1,20 +1,36 @@
 // Takes reports in, checks them against VRChat one at a time, and keeps the shared list.
 import { createHash } from 'node:crypto'
-import { and, asc, count, eq, gt, max } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, max } from 'drizzle-orm'
 import { BIO_WORDS } from './config'
 import { db, schema } from './db'
-import { type Grounds, meetsMinimum, verifiedGrounds } from './rules'
+import { DEFAULT_RULES, type Grounds, meetsRules, RULE_NAMES, type ServerRules, verifiedGrounds } from './rules'
 import { getUser } from './vrchat'
 
-const { reports, entries } = schema
+const { reports, entries, settings } = schema
+
+// The acceptance rules: what the management page saved, on top of the defaults. The bio words
+// start from VAPI_BIO_WORDS until the page sets its own.
+export function serverRules(): ServerRules {
+    const saved = (db.select().from(settings).where(eq(settings.key, 'rules')).get()?.value ?? {}) as Partial<ServerRules>
+    const rules = { ...DEFAULT_RULES.rules }
+    for (const k of RULE_NAMES) {
+        rules[k] = { ...DEFAULT_RULES.rules[k], ...(saved.rules?.[k] ?? {}) }
+    }
+    return { rules, ageDays: saved.ageDays ?? DEFAULT_RULES.ageDays, bioWords: saved.bioWords ?? BIO_WORDS }
+}
+
+export function saveRules(r: ServerRules) {
+    db.insert(settings).values({ key: 'rules', value: r }).onConflictDoUpdate({ target: settings.key, set: { value: r } }).run()
+}
 
 // Install ids and addresses are kept only as hashes.
 export const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 32)
 
-export type Received = 'queued' | 'known' | 'below minimum'
+export type Received = 'queued' | 'review' | 'known' | 'below minimum'
 
 export function receive(r: { userId: string; displayName: string; grounds: Grounds; install: string; ip: string }): Received {
-    if (!meetsMinimum(r.grounds)) {
+    const forReview = !!r.grounds.group
+    if (!forReview && !meetsRules(r.grounds, serverRules())) {
         return 'below minimum'
     }
     const listed = db.select().from(entries).where(and(eq(entries.userId, r.userId), eq(entries.removed, false))).get()
@@ -26,13 +42,24 @@ export function receive(r: { userId: string; displayName: string; grounds: Groun
             install: hash(r.install),
             ip: hash(r.ip),
             receivedAt: Date.now(),
-            outcome: listed ? 'known' : 'pending'
+            outcome: listed ? 'known' : forReview ? 'review' : 'pending'
         })
         .run()
-    if (!listed) {
-        wake()
+    if (listed) {
+        return 'known'
     }
-    return listed ? 'known' : 'queued'
+    if (forReview) {
+        return 'review'
+    }
+    wake()
+    return 'queued'
+}
+
+function list(userId: string, displayName: string, grounds: Grounds) {
+    db.insert(entries)
+        .values({ userId, displayName, grounds, seq: nextSeq(), addedAt: Date.now(), removed: false })
+        .onConflictDoUpdate({ target: entries.userId, set: { displayName, grounds, seq: nextSeq(), removed: false } })
+        .run()
 }
 
 function nextSeq(): number {
@@ -65,25 +92,13 @@ async function checkOne(): Promise<boolean> {
         done('rejected', 'no such user')
         return true
     }
-    const kept = verifiedGrounds(report.grounds as Grounds, found.user, BIO_WORDS)
-    if (!meetsMinimum(kept)) {
+    const rules = serverRules()
+    const kept = verifiedGrounds(report.grounds as Grounds, found.user, rules.bioWords)
+    if (!meetsRules(kept, rules)) {
         done('rejected', `held up: ${Object.keys(kept).join(', ') || 'nothing'}`)
         return true
     }
-    db.insert(entries)
-        .values({
-            userId: report.userId,
-            displayName: found.user.displayName,
-            grounds: kept,
-            seq: nextSeq(),
-            addedAt: Date.now(),
-            removed: false
-        })
-        .onConflictDoUpdate({
-            target: entries.userId,
-            set: { displayName: found.user.displayName, grounds: kept, seq: nextSeq(), removed: false }
-        })
-        .run()
+    list(report.userId, found.user.displayName, kept)
     done('accepted')
     return true
 }
@@ -126,7 +141,46 @@ export function unlist(userId: string) {
 }
 
 export function counts() {
-    const listed = db.select({ n: count() }).from(entries).where(eq(entries.removed, false)).get()?.n ?? 0
-    const pending = db.select({ n: count() }).from(reports).where(eq(reports.outcome, 'pending')).get()?.n ?? 0
-    return { listed, pending }
+    const n = (q: { n: number } | undefined) => q?.n ?? 0
+    const listed = n(db.select({ n: count() }).from(entries).where(eq(entries.removed, false)).get())
+    const pending = n(db.select({ n: count() }).from(reports).where(eq(reports.outcome, 'pending')).get())
+    const review = n(db.select({ n: count() }).from(reports).where(eq(reports.outcome, 'review')).get())
+    return { listed, pending, review }
+}
+
+// The group reports waiting for a person, one row per player.
+export function reviewQueue() {
+    const rows = db.select().from(reports).where(eq(reports.outcome, 'review')).orderBy(asc(reports.id)).all()
+    const byUser = new Map<string, { userId: string; displayName: string; groups: Set<string>; groupIds: Set<string>; reporters: Set<string>; grounds: Grounds; firstAt: number }>()
+    for (const r of rows) {
+        const g = r.grounds as Grounds
+        const item = byUser.get(r.userId) ?? { userId: r.userId, displayName: r.displayName, groups: new Set(), groupIds: new Set(), reporters: new Set(), grounds: {}, firstAt: r.receivedAt }
+        if (g.group) item.groups.add(g.group)
+        if (g.groupId) item.groupIds.add(g.groupId)
+        item.reporters.add(r.install)
+        item.grounds = { ...item.grounds, ...g }
+        byUser.set(r.userId, item)
+    }
+    return [...byUser.values()].map((i) => ({ ...i, groups: [...i.groups], groupIds: [...i.groupIds], reporters: i.reporters.size }))
+}
+
+// A person's verdict on a player's group reports. Approved: listed, with the group as grounds.
+export function decide(userId: string, approve: boolean) {
+    const item = reviewQueue().find((i) => i.userId === userId)
+    if (!item) {
+        return false
+    }
+    if (approve) {
+        list(userId, item.displayName, { group: item.groups.join(', '), reviewed: true } as Grounds)
+    }
+    db.update(reports)
+        .set({ outcome: approve ? 'accepted' : 'rejected', note: approve ? 'approved by review' : 'rejected by review' })
+        .where(and(eq(reports.userId, userId), eq(reports.outcome, 'review')))
+        .run()
+    return true
+}
+
+// The current list, newest first, for the management page.
+export function listed(limit = 200) {
+    return db.select().from(entries).where(eq(entries.removed, false)).orderBy(desc(entries.seq)).limit(limit).all()
 }

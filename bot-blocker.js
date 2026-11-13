@@ -83,7 +83,9 @@
     const DEFAULT_SETTINGS = {
         excludeFriends: true,
         share: SHARE_DEFAULT, // report blocks to the shared blocklist and block what's on it
-        reportGroups: false, // also report group blocks that meet the minimum; off: rule blocks only
+        // Also sync group blocks: send this user's group blocks for manual review on the server, and
+        // block other users' group blocks once a person approved them there.
+        syncGroups: false,
         ageDays: 7,
         bioWords: ['hexed.cc'], // keywords and websites the bio rule looks for
         rules: {
@@ -125,8 +127,8 @@
         saveSettings(s);
     }
 
-    function setReportGroups(value) {
-        saveSettings({ ...settings(), reportGroups: !!value });
+    function setSyncGroups(value) {
+        saveSettings({ ...settings(), syncGroups: !!value });
     }
 
     function setShare(value) {
@@ -269,19 +271,23 @@
                           ? `"${fits.bio}" in bio`
                           : RULE_LABELS[hit];
             }
-            let viaGroup = false;
+            let viaGroup = null;
             if (!reason && here && groupIds.length) {
                 const theirs = await queued(() => userGroupIds(userId));
                 const member = theirs.find((g) => groupIds.includes(g.id));
                 if (member) {
                     reason = `member of ${member.name}`;
-                    viaGroup = true;
+                    viaGroup = member;
                 }
             }
             if (reason) {
-                // Rule blocks are reported; group blocks only when the user asked for that too.
-                const reportIt = !viaGroup || s.reportGroups;
-                await block(displayName, userId, reason, reportIt ? groundsOf(fits) : null);
+                // Rule blocks are reported; group blocks only with "Also sync group blocks", and
+                // then as group reports, which wait for manual review on the server.
+                let grounds = groundsOf(fits);
+                if (viaGroup) {
+                    grounds = s.syncGroups ? { ...grounds, group: viaGroup.name, groupId: viaGroup.id } : null;
+                }
+                await block(displayName, userId, reason, grounds);
             }
         } catch (err) {
             console.warn(TAG, 'could not check', displayName, userId, err);
@@ -356,17 +362,34 @@
         if (fits.bio) {
             g.bio = fits.bio;
         }
-        if (fits.age && Number.isFinite(fits.ageDays)) {
+        // Always sent when known: the server may accept on account age even when this user doesn't.
+        if (Number.isFinite(fits.ageDays)) {
             g.age = Math.max(0, Math.floor(fits.ageDays));
         }
         return g;
     }
 
-    // The least a report needs: the default rule set (the server holds it to the same).
-    const meetsMinimum = (g) => (g.name && g.robot && g.visitor) || !!g.bio || !!g.nuisance;
+    // What the server accepts (its management page sets it; fetched with every sync). Until the
+    // first sync, the default rule set.
+    const SERVER_RULES_KEY = 'botBlocker.serverRules';
+    function meetsMinimum(g) {
+        let r = null;
+        try {
+            r = JSON.parse(localStorage.getItem(SERVER_RULES_KEY) || 'null');
+        } catch {}
+        if (!r?.rules) {
+            return (g.name && g.robot && g.visitor) || !!g.bio || !!g.nuisance;
+        }
+        const holds = (k) => (k === 'age' ? Number.isFinite(g.age) && g.age < r.ageDays : !!g[k]);
+        const on = Object.keys(r.rules).filter((k) => r.rules[k].on);
+        const alone = on.filter((k) => r.rules[k].always);
+        const together = on.filter((k) => !r.rules[k].always);
+        return alone.some(holds) || (together.length > 0 && together.every(holds));
+    }
 
     function report(userId, displayName, grounds) {
-        if (!settings().share || !meetsMinimum(grounds)) {
+        // Group reports go to manual review, so they don't need to meet the minimum.
+        if (!settings().share || !(grounds.group || meetsMinimum(grounds))) {
             return;
         }
         const outbox = loadList(OUTBOX_KEY);
@@ -423,6 +446,12 @@
             return;
         }
         try {
+            const rules = await fetch(`${API}/rules`).then((res) => (res.ok ? res.json() : null));
+            if (rules?.rules) {
+                localStorage.setItem(SERVER_RULES_KEY, JSON.stringify(rules));
+            }
+        } catch {}
+        try {
             const list = sharedList();
             let since = Number(localStorage.getItem(SHARED_SEQ_KEY) || 0);
             for (let page = 0; page < 50; page++) {
@@ -450,6 +479,10 @@
 
     // Whether this user's own rules would block an account with these grounds.
     function rulesAllow(g, s) {
+        // A group block someone approved on the server: only with "Also sync group blocks".
+        if (g.group) {
+            return !!s.syncGroups;
+        }
         const fits = {
             name: !!g.name,
             robot: !!g.robot,
@@ -480,7 +513,9 @@
             if (handled.has(userId) || (s.excludeFriends && isFriend(userId)) || !rulesAllow(e.grounds, s)) {
                 continue;
             }
-            const why = Object.keys(e.grounds).map((r) => (r === 'bio' ? `"${e.grounds.bio}" in bio` : RULE_LABELS[r] || r));
+            const why = e.grounds.group
+                ? [`group ${e.grounds.group}`]
+                : Object.keys(e.grounds).map((r) => (r === 'bio' ? `"${e.grounds.bio}" in bio` : RULE_LABELS[r] || r));
             await block(e.displayName, userId, `shared list: ${why.join(' + ')}`, null, true);
             return;
         }
@@ -766,13 +801,13 @@
                         : '<div class="bb-empty">No groups yet.</div>'
                 }</div>
                 <h3>Shared blocklist</h3>
-                <div class="bb-rule"><label>
+                <div class="bb-rule"><label title="Block bots others have reported, and share reports of bots you have blocked.">
                     <input type="checkbox" data-act="share" ${s.share ? 'checked' : ''} />
-                    <span>Use and contribute</span></label>
+                    <span>Use the shared blocklist</span></label>
                     <span class="bb-muted">${Object.keys(sharedList()).length} accounts</span></div>
                 <div class="bb-rule"><label>
-                    <input type="checkbox" data-act="report-groups" ${s.reportGroups ? 'checked' : ''} ${s.share ? '' : 'disabled'} />
-                    <span>Also report group blocks</span></label></div>
+                    <input type="checkbox" data-act="sync-groups" ${s.syncGroups ? 'checked' : ''} ${s.share ? '' : 'disabled'} />
+                    <span>Also sync group blocks</span></label></div>
                 </section>
                 <section>
                 <h3>Recently blocked</h3>
@@ -807,7 +842,7 @@
             setShare(e.target.checked);
             renderPanel();
         };
-        panel.querySelector('[data-act="report-groups"]').onchange = (e) => setReportGroups(e.target.checked);
+        panel.querySelector('[data-act="sync-groups"]').onchange = (e) => setSyncGroups(e.target.checked);
         panel.querySelectorAll('[data-word]').forEach((btn) => {
             btn.onclick = () => {
                 setBioWords(settings().bioWords.filter((w) => w !== btn.dataset.word));
@@ -1048,7 +1083,7 @@
         setRule,
         setExcludeFriends,
         setShare,
-        setReportGroups,
+        setSyncGroups,
         syncShared,
         shared: sharedList,
         setAgeDays,

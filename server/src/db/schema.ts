@@ -19,6 +19,12 @@ export const reports = sqliteTable(
     (t) => [index('reports_pending').on(t.outcome), index('reports_user').on(t.userId)]
 )
 
+// Settings changed on the management page, one JSON value per key ('rules').
+export const settings = sqliteTable('settings', {
+    key: text('key').primaryKey(),
+    value: text('value', { mode: 'json' }).notNull()
+})
+
 // The shared list. `seq` grows with every change (added, removed again), so a plugin asks only
 // for what changed since its last sync.
 export const entries = sqliteTable(

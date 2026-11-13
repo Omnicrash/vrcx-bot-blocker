@@ -8,6 +8,13 @@
       "when": 1794568534745,
       "tag": "0000_omniscient_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1794571046167,
+      "tag": "0001_lazy_madame_masque",
+      "breakpoints": true
     }
   ]
 }

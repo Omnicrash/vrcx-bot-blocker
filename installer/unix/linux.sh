@@ -72,6 +72,10 @@ share=1
 if [ "${1:-}" = "--no-share" ]; then
     share=0
 elif [ -t 0 ]; then
+    say "Shared blocklist: blocks the bots other users have reported, often before they reach you,"
+    say "and reports the ones your rules catch. Every report is checked on VRChat before it is listed."
+    say "Sent: the blocked player's ID and name, what they were caught on, and a random ID for this"
+    say "install. Nothing about you or your VRChat account. Switch it off later on the Bot Blocker page."
     printf 'Use and contribute to the shared blocklist? [Y/n] '
     read -r answer || answer=''
     case "$answer" in n* | N*) share=0 ;; esac

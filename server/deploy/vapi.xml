@@ -33,6 +33,10 @@
           Description="The API, proxied by NPMplus." Type="Port" Display="always"
           Required="true" Mask="false">3060</Config>
 
+  <Config Name="Management" Target="3061" Default="3061" Mode="tcp"
+          Description="The management page (reviewing group reports, acceptance rules). LAN only: never put it behind NPMplus."
+          Type="Port" Display="always" Required="true" Mask="false">3061</Config>
+
   <Config Name="Data" Target="/data" Default="/mnt/user/appdata/vrcx-bot-blocker" Mode="rw"
           Description="The database (reports and the shared list) and the VRChat login cookie."
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vrcx-bot-blocker</Config>
