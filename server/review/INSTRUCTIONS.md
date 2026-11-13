@@ -62,7 +62,7 @@ profile mentioning it puts the player on the list.
 2. End with a short summary as your final message. Its **first line is one sentence Yve can hear
    out loud** (it is read to him through Teto): what you did and whether anything waits for him.
    Below it, plain language: how many players you whitelisted and why, what you decided, and what
-   waits for him on the management page (`http://192.168.1.10:3061`). Nothing done and nothing
+   waits for him on the management page (`https://botblocker.omnicrash.be`). Nothing done and nothing
    waiting: one line is enough.
 
 Never change the acceptance rules, approve groups or words outside the clear cases above, or
