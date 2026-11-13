@@ -1,7 +1,7 @@
 // Takes reports in, looks each player up once, and keeps the shared list in line with the
 // acceptance rules. A lookup is reused for good; only listed entries are re-checked, slowly.
 import { createHash } from 'node:crypto'
-import { and, asc, count, desc, eq, gt, inArray, lt, max, ne, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, inArray, isNull, lt, max, ne, or, sql } from 'drizzle-orm'
 import { BIO_WORDS, RECHECK_AFTER_DAYS, RECHECK_PER_HOUR } from './config'
 import { db, schema, sqlite } from './db'
 import { DEFAULT_RULES, DEFAULT_WORDS, type Facts, type Grounds, factsOf, judge, type ServerRules, worthReporting } from './rules'
@@ -134,7 +134,7 @@ function putOnList(userId: string, displayName: string, grounds: Grounds) {
         .run()
 }
 
-function takeOff(userId: string, by: 'rules' | 'admin') {
+function takeOff(userId: string, by: 'rules' | 'admin' | 'gone') {
     db.update(entries).set({ removed: true, removedBy: by, seq: currentSeq() + 1 }).where(eq(entries.userId, userId)).run()
 }
 
@@ -153,12 +153,12 @@ function ruledPlayers(): string[] {
 }
 
 // What the rules make of one player: 'add', 'remove' or nothing. Hand removals and approved group
-// blocks are a person's decisions, which the rules never undo.
+// blocks are a person's decisions, which the rules never undo; accounts gone from VRChat stay off.
 function verdict(userId: string, rules: ServerRules, approved: string[]) {
     const check = checkOf(userId)
     const entry = entryOf(userId)
     const none = { change: null, displayName: entry?.displayName ?? '', grounds: {} as Grounds }
-    if (!check || entry?.removedBy === 'admin' || (entry && !entry.removed && (entry.grounds as Grounds).reviewed)) {
+    if (!check || entry?.removedBy === 'admin' || entry?.removedBy === 'gone' || (entry && !entry.removed && (entry.grounds as Grounds).reviewed)) {
         return none
     }
     const facts = check.facts as Facts
@@ -312,20 +312,27 @@ export function wake() {
 }
 
 // The slow re-check: a few listed entries an hour whose check is old, so renamed or ranked-up
-// accounts drop off in time. Reports never cause a second lookup.
+// accounts drop off in time, and accounts VRChat deleted or banned leave the list for good.
+// Reports never cause a second lookup.
 export async function recheckSome() {
     const cutoff = Date.now() - RECHECK_AFTER_DAYS * 86_400_000
     const due = db
         .select({ id: entries.userId })
         .from(entries)
-        .innerJoin(checks, eq(checks.userId, entries.userId))
-        .where(and(eq(entries.removed, false), lt(checks.checkedAt, cutoff)))
-        .orderBy(asc(checks.checkedAt))
+        .leftJoin(checks, eq(checks.userId, entries.userId))
+        .where(and(eq(entries.removed, false), or(isNull(checks.checkedAt), lt(checks.checkedAt, cutoff))))
+        .orderBy(sql`coalesce(${checks.checkedAt}, 0)`)
         .limit(RECHECK_PER_HOUR)
         .all()
     for (const { id } of due) {
-        if ((await lookUp(id)) === 'later') {
+        const got = await lookUp(id)
+        if (got === 'later') {
             return
+        }
+        if (got === 'missing') {
+            takeOff(id, 'gone')
+            changed()
+            continue
         }
         decide(id)
     }
@@ -352,6 +359,8 @@ export function changesSince(since: number, limit: number) {
         more,
         added: page.filter((e) => !e.removed).map((e) => ({ userId: e.userId, displayName: e.displayName, grounds: e.grounds })),
         removed: page.filter((e) => e.removed).map((e) => e.userId),
+        // Removed because the account no longer exists: plugins drop them without unblocking.
+        gone: page.filter((e) => e.removed && e.removedBy === 'gone').map((e) => e.userId),
         whitelistSeq
     }
 }
@@ -406,7 +415,7 @@ export function decideGroup(userId: string, approve: boolean) {
         return
     }
     const entry = entryOf(userId)
-    if (approve && !(entry && !entry.removed) && entry?.removedBy !== 'admin') {
+    if (approve && !(entry && !entry.removed) && entry?.removedBy !== 'admin' && entry?.removedBy !== 'gone') {
         putOnList(userId, item.displayName, { group: item.groups.map((g) => g.name).join(', '), reviewed: true })
         changed()
     }

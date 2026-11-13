@@ -47,7 +47,7 @@ export const LIMIT_PER_IP = Number(env.VAPI_LIMIT_PER_IP ?? 300)
 export const LIST_PAGE = Number(env.VAPI_LIST_PAGE ?? 2000)
 
 // Protecting the VRChat account: a player is looked up once, then only listed entries are
-// re-checked, a few an hour once their check is a month old, all under a daily cap.
+// re-checked, a few an hour once their check is a week old, all under a daily cap.
 export const LOOKUPS_PER_DAY = Number(env.VAPI_LOOKUPS_PER_DAY ?? 300)
-export const RECHECK_AFTER_DAYS = Number(env.VAPI_RECHECK_AFTER_DAYS ?? 30)
-export const RECHECK_PER_HOUR = Number(env.VAPI_RECHECK_PER_HOUR ?? 2)
+export const RECHECK_AFTER_DAYS = Number(env.VAPI_RECHECK_AFTER_DAYS ?? 7)
+export const RECHECK_PER_HOUR = Number(env.VAPI_RECHECK_PER_HOUR ?? 6)

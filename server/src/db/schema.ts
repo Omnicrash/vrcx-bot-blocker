@@ -64,8 +64,8 @@ export const settings = sqliteTable('settings', {
 })
 
 // The shared list. `seq` grows with every change (added, removed again), so a plugin asks only
-// for what changed since its last sync. `removedBy`: 'rules' (no longer fits) or 'admin' (taken
-// off by hand, which nothing puts back).
+// for what changed since its last sync. `removedBy`: 'rules' (no longer fits), 'gone' (VRChat no
+// longer has the account) or 'admin' (taken off by hand); nothing puts the last two back.
 export const entries = sqliteTable(
     'entries',
     {
