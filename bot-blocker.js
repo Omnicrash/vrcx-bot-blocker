@@ -16,7 +16,7 @@
 // Nobody is ever blocked twice: anyone this script blocked before, and anyone you unblock in
 // VRCX yourself, is left alone from then on.
 (function () {
-    const VERSION = '2.0.2'; // build.sh checks it against the VERSION file
+    const VERSION = '2.0.3'; // build.sh checks it against the VERSION file
     const UPDATE_KEY = 'botBlocker.update'; // a newer release, downloaded and its signature checked
 
     // A newer release the updater downloaded runs in place of this copy. If it fails to start,
