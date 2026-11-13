@@ -114,6 +114,9 @@ your own blocks stay.
 It's on by default. Uncheck it in the installer, or switch off **Use the shared blocklist** on the
 Bot Blocker page. Off means nothing is sent and nothing is fetched.
 
+When sharing is switched on (or a new version turns it on), the players your rules blocked
+earlier are sent once as well, a few at a time.
+
 What leaves your computer: the blocked player's ID and display name, what the plugin saw (default
 name, Robot avatar, Visitor rank, account age, a word from the bio), which of your rules caught
 them, and a random ID this install made up for itself. Nothing about you or your VRChat account.

@@ -141,6 +141,7 @@
     function setShare(value) {
         saveSettings({ ...settings(), share: !!value });
         if (value) {
+            sendHistory();
             syncShared();
             listen();
         } else {
@@ -420,7 +421,7 @@
         }
         const outbox = loadList(OUTBOX_KEY);
         outbox.push({ userId, displayName, grounds, caughtBy });
-        saveList(OUTBOX_KEY, outbox.slice(-500));
+        saveList(OUTBOX_KEY, outbox.slice(-3000));
         flushOutbox();
     }
 
@@ -608,6 +609,42 @@
         }
     }
 
+    // Blocks made before sharing was on (or before this version) go to the list too, once: the
+    // server looks every player up itself, so the grounds read back from the old reason text only
+    // decide whether a report is worth sending. Blocks that came from the list never go back.
+    const HISTORY_SENT_KEY = 'botBlocker.historySentUpTo';
+    function groundsFromReason(reason) {
+        const r = (reason || '').toLowerCase();
+        const g = {};
+        if (r.includes('default name') || r.includes('default account')) g.name = true;
+        if (r.includes('robot')) g.robot = true;
+        if (r.includes('visitor') || r.includes('default account')) g.visitor = true;
+        const word = /"([^"]+)" in bio/.exec(reason || '')?.[1];
+        if (word) g.bio = word;
+        const days = /account (\d+) day/.exec(r)?.[1];
+        if (days !== undefined) g.age = Number(days);
+        else if (r.includes('new account')) g.age = 0;
+        return g;
+    }
+
+    function sendHistory() {
+        const s = settings();
+        if (!s.share) {
+            return;
+        }
+        const since = localStorage.getItem(HISTORY_SENT_KEY) || '';
+        const fromList = new Set(loadList(SHARED_BLOCKS_KEY));
+        const old = loadBlocked().filter(
+            (b) => b.at > since && !fromList.has(b.userId) && !/^shared list/i.test(b.reason || '') && (s.syncGroups || !/^member of/i.test(b.reason || ''))
+        );
+        for (const b of old) {
+            report(b.userId, b.displayName, groundsFromReason(b.reason), { history: true });
+        }
+        try {
+            localStorage.setItem(HISTORY_SENT_KEY, new Date().toISOString());
+        } catch {}
+    }
+
     // A fresh install starts from the default rules, once, with the installer's sharing choice;
     // after that the page decides. The group list, the block history and the never-block-again
     // list are the user's own and stay.
@@ -642,6 +679,7 @@
 
     function startShared() {
         applyInstallChoice();
+        sendHistory();
         syncShared();
         flushOutbox();
         listen();
