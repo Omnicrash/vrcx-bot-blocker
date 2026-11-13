@@ -56,7 +56,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" out/* --title "VRCX Bot Blocker ${GITHUB_REF_NAME#v}" --notes-file - <<'EOF'
+          # notes/<tag>.md, when there is one, goes above the download list.
+          { [ -f "notes/$GITHUB_REF_NAME.md" ] && cat "notes/$GITHUB_REF_NAME.md" && echo; cat; } <<'EOF' > notes.md
           Download the installer for your system:
 
           - **Windows:** `VRCX-Bot-Blocker-…-setup.exe`. SmartScreen may warn: More info, then Run anyway.
@@ -64,3 +65,4 @@ jobs:
           - **Linux:** `VRCX-Bot-Blocker-…-linux.sh`, run it with `sh`.
           - **Manual:** `bot-blocker.js` is the plugin by itself; see the README.
           EOF
+          gh release create "$GITHUB_REF_NAME" out/* --title "VRCX Bot Blocker ${GITHUB_REF_NAME#v}" --notes-file notes.md
