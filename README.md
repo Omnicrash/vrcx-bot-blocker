@@ -25,8 +25,9 @@ The installers aren't signed, so the first time your system may warn about them:
 - **macOS:** macOS says it can't verify the developer. Open **System Settings > Privacy &
   Security**, scroll down and click **Open Anyway**.
 
-Bot Blocker updates itself. It checks GitHub for new versions, and a new version runs from the
-next time VRCX starts. To update by hand instead, switch off **Update automatically** on the Bot
+Bot Blocker updates itself. It checks GitHub for new versions when VRCX starts and every 6 hours,
+and a new version runs from the next time VRCX starts. **Check for updates** on the Bot Blocker
+page checks right away. To update by hand instead, switch off **Update automatically** on the Bot
 Blocker page and install the newer version over the old one.
 
 ### Installing by hand

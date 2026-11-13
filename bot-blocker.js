@@ -1153,6 +1153,13 @@
                     <input type="checkbox" data-act="auto-update" ${s.autoUpdate ? 'checked' : ''} />
                     <span>Update automatically</span></label>
                     <span class="bb-muted">${esc(VERSION)}</span></div>
+                ${
+                    readyUpdate()
+                        ? `<div class="bb-rule"><span>${esc(readyUpdate())} is ready. Restart VRCX to update.</span>
+                            <button class="bb-btn" data-act="restart">Restart</button></div>`
+                        : `<div class="bb-rule"><button class="bb-btn" data-act="check-update">Check for updates</button>
+                            <span class="bb-muted bb-update-result"></span></div>`
+                }
                 </section>
                 <section>
                 <h3>Recently blocked</h3>
@@ -1200,6 +1207,25 @@
         };
         panel.querySelector('[data-act="sync-groups"]').onchange = (e) => setSyncGroups(e.target.checked);
         panel.querySelector('[data-act="unblock-cleared"]').onchange = (e) => saveSettings({ ...settings(), unblockCleared: e.target.checked });
+        const check = panel.querySelector('[data-act="check-update"]');
+        if (check) {
+            check.onclick = async () => {
+                const result = panel.querySelector('.bb-update-result');
+                check.disabled = true;
+                result.textContent = 'Checking...';
+                const got = await checkForUpdate(true);
+                if (got !== 'latest' && got !== 'failed') {
+                    renderPanel();
+                    return;
+                }
+                check.disabled = false;
+                result.textContent = got === 'latest' ? 'Up to date' : "Couldn't check for updates";
+            };
+        }
+        const restart = panel.querySelector('[data-act="restart"]');
+        if (restart) {
+            restart.onclick = restartVrcx;
+        }
         panel.querySelector('[data-act="auto-update"]').onchange = (e) => {
             saveSettings({ ...settings(), autoUpdate: e.target.checked });
             e.target.checked && checkForUpdate();
@@ -1396,15 +1422,20 @@
         return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, sig, new TextEncoder().encode(code));
     }
 
-    async function checkForUpdate() {
-        if (!settings().autoUpdate) {
-            return;
+    // Returns the newer version that's ready, 'latest', or 'failed'. `byHand`: the Check for
+    // updates button, which works with automatic updates off too and shows the notice again.
+    async function checkForUpdate(byHand = false) {
+        if (!byHand && !settings().autoUpdate) {
+            return 'latest';
         }
         try {
             const release = await (await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`)).json();
             const version = String(release.tag_name || '').replace(/^v/, '');
-            if (!/^\d+\.\d+\.\d+$/.test(version) || !newerVersion(version, VERSION)) {
-                return;
+            if (!/^\d+\.\d+\.\d+$/.test(version)) {
+                return 'failed';
+            }
+            if (!newerVersion(version, VERSION)) {
+                return 'latest';
             }
             let staged = null;
             try {
@@ -1422,21 +1453,25 @@
                 const [code, signature] = await Promise.all([get('bot-blocker.js'), get('bot-blocker.js.sig')]);
                 if (!code.includes(`const VERSION = '${version}';`) || !(await signedRelease(code, signature))) {
                     console.warn(TAG, `update ${version} isn't signed by the release key, skipped`);
-                    return;
+                    return 'failed';
                 }
                 localStorage.setItem(UPDATE_KEY, JSON.stringify({ version, code }));
                 console.info(TAG, `update ${version} downloaded, runs from the next start`);
             }
-            showUpdateNotice(version);
+            showUpdateNotice(version, byHand);
+            renderPanel();
+            return version;
         } catch (err) {
             console.warn(TAG, 'update check failed', String(err));
+            return 'failed';
         }
     }
 
-    function showUpdateNotice(version) {
-        if (updateShown || !document.body) {
+    function showUpdateNotice(version, again = false) {
+        if ((updateShown && !again) || !document.body) {
             return;
         }
+        document.querySelector('.bb-toast')?.remove();
         updateShown = true;
         addStyles();
         const notice = document.createElement('div');
@@ -1445,14 +1480,36 @@
         notice.innerHTML = `<span>Bot Blocker ${esc(version)} is ready. Restart VRCX to update.</span>
             <button class="bb-btn" data-act="restart">Restart</button>
             <button class="bb-btn bb-ghost" data-act="close" title="Close"><i class="ri-close-line"></i></button>`;
-        notice.querySelector('[data-act="restart"]').onclick = () =>
-            window.electron?.restartApp ? window.electron.restartApp() : AppApi.RestartApplication(false);
+        notice.querySelector('[data-act="restart"]').onclick = restartVrcx;
         notice.querySelector('[data-act="close"]').onclick = () => notice.remove();
         document.body.appendChild(notice);
     }
 
+    // VRCX's own restart. On Windows it starts a new VRCX and exits; without the upgrade flag the
+    // new one sees this one still running, hands over to it and quits, and nothing is left.
+    async function restartVrcx() {
+        try {
+            await window.VRCXStorage?.Save?.();
+        } catch {}
+        if (window.electron?.restartApp) {
+            window.electron.restartApp();
+        } else {
+            AppApi.RestartApplication(true);
+        }
+    }
+
+    // The newer version that's downloaded and runs from the next start, if any.
+    function readyUpdate() {
+        try {
+            const staged = JSON.parse(localStorage.getItem(UPDATE_KEY) || 'null');
+            return staged && newerVersion(staged.version, VERSION) ? staged.version : null;
+        } catch {
+            return null;
+        }
+    }
+
     function startUpdates() {
-        setTimeout(checkForUpdate, 2 * 60_000);
+        setTimeout(checkForUpdate, 10_000);
         setInterval(checkForUpdate, UPDATE_EVERY_MS);
     }
 
