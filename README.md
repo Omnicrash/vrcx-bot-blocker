@@ -79,8 +79,9 @@ How they combine:
 - Rules without **Always block** count together: a player is blocked only when every one of them
   that's checked fits. The three defaults together describe the data-gathering bots. Plenty of
   real people keep a default name, so none of them alone is enough.
-- Rules with **Always block** block on their own. Only the rules strong enough for that offer it:
-  the bio, Nuisance, Almost Nuisance and account age.
+- Rules with **Always block** block on their own. Every rule has it; it starts on for the bio,
+  Nuisance, Almost Nuisance and account age, and off for the three that each catch real people
+  alone.
 - **Exclude friends** (on by default) keeps friends out of all of it.
 - Members of a group on your list are always blocked (see above).
 

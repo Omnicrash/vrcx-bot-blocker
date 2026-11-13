@@ -60,12 +60,10 @@
     const groups = () => loadList(GROUPS_KEY);
 
     // The rules, all switchable on the Bot Blocker page. Every checked rule without "always" has to
-    // fit for a block; a checked rule with "always" blocks by itself. Only the rules that are
-    // strong enough alone (CAN_ALWAYS) offer "always": a default name, the Robot avatar or Visitor
-    // rank on their own catch lots of real people.
+    // fit for a block; a checked rule with "always" blocks by itself. "Always" starts off for the
+    // default name, the Robot avatar and Visitor rank: each of those alone catches real people.
     const SETTINGS_KEY = 'botBlocker.rules';
     const RULES = ['name', 'robot', 'visitor', 'bio', 'nuisance', 'probable', 'age'];
-    const CAN_ALWAYS = ['bio', 'nuisance', 'probable', 'age'];
     const FROM_LOG = ['name', 'robot']; // known from the game log, the rest needs the profile
     const RULE_LABELS = {
         name: 'default name',
@@ -81,9 +79,9 @@
         ageDays: 7,
         bioWords: ['hexed.cc'], // keywords and websites the bio rule looks for
         rules: {
-            name: { on: true },
-            robot: { on: true },
-            visitor: { on: true },
+            name: { on: true, always: false },
+            robot: { on: true, always: false },
+            visitor: { on: true, always: false },
             bio: { on: true, always: true },
             nuisance: { on: true, always: true },
             probable: { on: false, always: true },
@@ -191,7 +189,7 @@
         }
         const s = settings();
         const on = (r) => s.rules[r].on;
-        const alone = RULES.filter((r) => on(r) && s.rules[r].always && CAN_ALWAYS.includes(r));
+        const alone = RULES.filter((r) => on(r) && s.rules[r].always);
         const together = RULES.filter((r) => on(r) && !alone.includes(r));
         const fromLog = {
             name: hasDefaultName(displayName, userId),
@@ -483,10 +481,9 @@
         const s = settings();
         const ruleRow = (rule, title) => {
             const r = s.rules[rule];
-            const always = CAN_ALWAYS.includes(rule)
-                ? `<label class="bb-always" title="If on, this rule will apply independently of the rest."><input type="checkbox" data-always="${rule}" ${r.always ? 'checked' : ''}
-                        ${r.on ? '' : 'disabled'} /> Always block</label>`
-                : '';
+            const always = `<label class="bb-always" title="If on, this rule will apply independently of the rest.">
+                    <input type="checkbox" data-always="${rule}" ${r.always ? 'checked' : ''} ${r.on ? '' : 'disabled'} />
+                    Always block</label>`;
             return `<div class="bb-rule"><label>
                     <input type="checkbox" data-rule="${rule}" ${r.on ? 'checked' : ''} />
                     <span>${title}</span></label>${always}</div>`;
