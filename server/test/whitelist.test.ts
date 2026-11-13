@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { admin, testSession } from '../src/admin'
+import { admin, TEST_USER } from '../src/admin'
 import { app } from '../src/app'
 import { db, schema } from '../src/db'
 import { hash } from '../src/reports'
@@ -24,8 +24,7 @@ test('whitelisting takes a player off the list and deletes everything stored abo
     const before = await list()
     expect(before.added.map((e) => e.userId)).toContain(REAL)
 
-    const cookie = testSession()
-    await admin.request(`/whitelist/${REAL}`, { method: 'POST', headers: { Cookie: cookie, Host: 'xdisk:3061', Origin: 'http://xdisk:3061', 'Sec-Fetch-Site': 'same-origin' } })
+        await admin.request(`/whitelist/${REAL}`, { method: 'POST', headers: { ...TEST_USER, Host: 'xdisk:3061', Origin: 'http://xdisk:3061', 'Sec-Fetch-Site': 'same-origin' } })
     const after = await list(before.seq)
     expect(after.whitelistSeq).toBeGreaterThan(0)
     expect(JSON.stringify(after)).not.toContain(hash(REAL)) // the whitelist itself never goes out
@@ -57,8 +56,7 @@ test('the review sees new items, can decide clear group cases and recommend the 
     expect(items.groups.map((g) => g.userId)).toContain(GROUPIE)
 
     await api(`/api/groups/${GROUPIE}`, { verdict: 'approve', reasoning: 'Sells cheats.', decide: false })
-    const cookie = testSession()
-    const page = await (await admin.request('/', { headers: { Cookie: cookie, Host: 'xdisk:3061' } })).text()
+        const page = await (await admin.request('/', { headers: { ...TEST_USER, Host: 'xdisk:3061' } })).text()
     expect(page).toContain('Review suggests <b>approve</b>: Sells cheats.')
 
     await api(`/api/groups/${GROUPIE}`, { verdict: 'approve', decide: true })

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { admin, isPrivate, testSession } from '../src/admin'
+import { admin, fromDocker, TEST_USER } from '../src/admin'
 import { app } from '../src/app'
 import { saveRules } from '../src/reports'
 import { DEFAULT_RULES } from '../src/rules'
@@ -12,32 +12,34 @@ const NEWBIE = 'usr_88888888-8888-8888-8888-88888888abcd' // default name + new,
 users.set(MEMBER, { id: MEMBER, displayName: 'Scraper', tags: ['system_trust_basic', 'system_trust_known'] })
 users.set(NEWBIE, { id: NEWBIE, displayName: 'Glorp abcd', tags: [], date_joined: new Date().toISOString().slice(0, 10), iconUrl: 'x' })
 
-const cookie = testSession()
-const get = (path: string, headers: Record<string, string> = {}) => admin.request(path, { headers: { Cookie: cookie, Host: 'xdisk:3061', ...headers } })
+const get = (path: string, headers: Record<string, string> = {}) => admin.request(path, { headers: { ...TEST_USER, Host: 'xdisk:3061', ...headers } })
 const form = (path: string, fields: Record<string, string> = {}, headers: Record<string, string> = {}) =>
     admin.request(path, {
         method: 'POST',
         body: new URLSearchParams(fields),
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie, Host: 'xdisk:3061', Origin: 'http://xdisk:3061', 'Sec-Fetch-Site': 'same-origin', ...headers }
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...TEST_USER, Host: 'xdisk:3061', Origin: 'http://xdisk:3061', 'Sec-Fetch-Site': 'same-origin', ...headers }
     })
 const ids = async () => ((await (await app.request('/v1/list?since=0')).json()) as { added: { userId: string; grounds: Record<string, unknown> }[] }).added
 const reportPlayer = (userId: string, grounds: object) =>
     app.request('/v1/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ install: crypto.randomUUID(), userId, displayName: 'x', grounds }) })
 
-test('only private addresses reach the management page', () => {
-    for (const a of ['192.168.1.20', '10.0.0.5', '172.17.0.1', '127.0.0.1', '::1', '::ffff:192.168.1.20', 'fd12:3456::1']) {
-        expect(isPrivate(a)).toBe(true)
+test('only Docker networks reach the management port, not the LAN', () => {
+    for (const a of ['172.17.0.1', '172.17.0.5', '127.0.0.1', '::1', '::ffff:172.17.0.9']) {
+        expect(fromDocker(a)).toBe(true)
     }
-    for (const a of ['8.8.8.8', '172.32.0.1', '213.219.143.117', '2a02:181f:1::1', undefined]) {
-        expect(isPrivate(a)).toBe(false)
+    for (const a of ['192.168.1.20', '10.0.0.5', '8.8.8.8', '172.32.0.1', '::ffff:192.168.1.20', 'fd12:3456::1', undefined]) {
+        expect(fromDocker(a)).toBe(false)
     }
 })
 
-test('without a session everything sends you to the login', async () => {
-    const res = await admin.request('/', { headers: { Host: 'xdisk:3061' } })
+test('without an OSign user nothing opens', async () => {
+    expect((await admin.request('/', { headers: { Host: 'xdisk:3061' } })).status).toBe(401)
+    expect((await admin.request('/remove/x', { method: 'POST', headers: { Host: 'xdisk:3061' } })).status).toBe(401)
+})
+
+test('a form from the page itself over https is accepted', async () => {
+    const res = await form('/remove/x', {}, { Host: 'botblocker.omnicrash.be', Origin: 'https://botblocker.omnicrash.be' })
     expect(res.status).toBe(302)
-    expect(res.headers.get('location')).toBe('/login')
-    expect((await admin.request('/remove/x', { method: 'POST', headers: { Host: 'xdisk:3061' } })).headers.get('location')).toBe('/login')
 })
 
 test('a form posted from another site is refused, even with a session', async () => {

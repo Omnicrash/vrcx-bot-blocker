@@ -9,10 +9,6 @@ export const PORT = Number(env.VAPI_PORT ?? 3060)
 // The management page: its own port, only published on the LAN, behind a password whose hash
 // (Bun.password, argon2) is read at each sign-in. Without one the page lets nobody in.
 export const ADMIN_PORT = Number(env.VAPI_ADMIN_PORT ?? 3061)
-// The hash lives in a file next to the database (a hash's "$" signs don't survive Unraid's
-// container settings), read at every sign-in so a new password needs no restart.
-// VAPI_ADMIN_PASSWORD_HASH wins when set, for tests and local runs.
-const ADMIN_HASH_FILE = env.VAPI_ADMIN_HASH_FILE ?? './data/admin.hash'
 // The daily review's token for /api on the management port: VAPI_REVIEW_TOKEN, else review.token
 // next to the database. Without one the review API lets nobody in.
 const REVIEW_TOKEN_FILE = env.VAPI_REVIEW_TOKEN_FILE ?? './data/review.token'
@@ -27,16 +23,6 @@ export function reviewToken(): string {
     }
 }
 
-export function adminPasswordHash(): string {
-    if (env.VAPI_ADMIN_PASSWORD_HASH) {
-        return env.VAPI_ADMIN_PASSWORD_HASH
-    }
-    try {
-        return readFileSync(ADMIN_HASH_FILE, 'utf8').trim()
-    } catch {
-        return ''
-    }
-}
 
 // The VRChat account the server looks players up with (an authenticator secret, so it can log
 // in unattended). Empty: the server takes reports but can't verify them yet.

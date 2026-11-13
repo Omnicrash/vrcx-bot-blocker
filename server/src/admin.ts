@@ -2,13 +2,11 @@
 // shared list itself. Its port is only reachable from the LAN; on top of that it wants a password
 // (VAPI_ADMIN_PASSWORD_HASH), refuses requests made from other sites, and refuses non-private
 // addresses. Anything that would move the list shows a preview first.
-import { randomBytes } from 'node:crypto'
 import { Hono } from 'hono'
-import { getCookie, setCookie } from 'hono/cookie'
 import { html } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 import { timingSafeEqual } from 'node:crypto'
-import { adminPasswordHash, reviewToken } from './config'
+import { reviewToken } from './config'
 import {
     allEntries,
     approvedWords,
@@ -35,18 +33,16 @@ import {
 import { type Grounds, SIGNS, type ServerRules, type Sign } from './rules'
 import { budget, loginState } from './vrchat'
 
-// 10/8, 172.16/12, 192.168/16, loopback, and their IPv6 forms.
-export function isPrivate(address: string | undefined): boolean {
+// Docker's own networks (172.16/12) and loopback: NPMplus and the other containers on the host.
+// The LAN itself can't reach the management port directly; people come in through NPMplus,
+// which signs them in with OSign and is LAN-only for this host.
+export function fromDocker(address: string | undefined): boolean {
     const a = (address ?? '').replace(/^::ffff:/, '')
-    if (a === '::1' || /^f[cd][0-9a-f]{2}:/i.test(a)) {
+    if (a === '::1' || a === '127.0.0.1') {
         return true
     }
-    const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(a)
-    if (!m) {
-        return false
-    }
-    const [x, y] = [Number(m[1]), Number(m[2])]
-    return x === 10 || x === 127 || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168)
+    const m = /^172\.(\d+)\.\d+\.\d+$/.exec(a)
+    return !!m && Number(m[1]) >= 16 && Number(m[1]) <= 31
 }
 
 const SIGN_LABELS: Record<Sign, string> = {
@@ -55,9 +51,6 @@ const SIGN_LABELS: Record<Sign, string> = {
     visitor: 'Visitor rank',
     age: 'New account'
 }
-const COOKIE = 'vapi_admin'
-const sessions = new Map<string, number>() // token -> expires at
-const loginTries: number[] = []
 
 const groundsText = (g: Grounds) =>
     g.group
@@ -101,19 +94,17 @@ admin.use('*', async (c, next) => {
         const site = c.req.header('sec-fetch-site')
         const origin = c.req.header('origin')
         const host = c.req.header('host')
-        if ((site && site !== 'same-origin' && site !== 'none') || (origin && host && origin !== `http://${host}`)) {
+        const originHost = origin ? origin.replace(/^https?:\/\//, '') : null
+        if ((site && site !== 'same-origin' && site !== 'none') || (originHost && host && originHost !== host)) {
             return c.text('Forbidden', 403)
         }
     }
     await next()
 })
 
-// Everything but the login itself wants a session.
+// The daily review signs in with its own token; people through OSign, whose forward-auth in
+// NPMplus puts the signed-in user in Remote-User.
 admin.use('*', async (c, next) => {
-    if (c.req.path === '/login') {
-        return next()
-    }
-    // The daily review signs in with its own token instead of a session.
     if (c.req.path.startsWith('/api/')) {
         const sent = Buffer.from((c.req.header('authorization') ?? '').replace(/^Bearer /, ''))
         const token = Buffer.from(reviewToken())
@@ -122,58 +113,10 @@ admin.use('*', async (c, next) => {
         }
         return next()
     }
-    const token = getCookie(c, COOKIE)
-    if (!token || (sessions.get(token) ?? 0) < Date.now()) {
-        return c.redirect('/login')
+    if (!c.req.header('remote-user')) {
+        return c.text('Open this page through its OSign address.', 401)
     }
     await next()
-})
-
-admin.get('/login', (c) =>
-    c.html(
-        page(
-            'Bot Blocker - sign in',
-            adminPasswordHash()
-                ? html`<h1>Bot Blocker</h1>
-                      ${c.req.query('failed') === 'busy'
-                          ? html`<p class="warn">Too many tries: wait a minute.</p>`
-                          : c.req.query('failed')
-                            ? html`<p class="warn">Wrong password.</p>`
-                            : ''}
-                      <form method="post" action="/login">
-                          <input type="password" name="password" autofocus /> <button class="ok">Sign in</button>
-                      </form>`
-                : html`<h1>Bot Blocker</h1>
-                      <p class="warn">No password set yet (admin.hash in the data folder), so nobody can sign in.</p>`
-        )
-    )
-)
-
-admin.post('/login', async (c) => {
-    const now = Date.now()
-    while (loginTries.length && loginTries[0]! < now - 60_000) loginTries.shift()
-    loginTries.push(now)
-    const password = String((await c.req.parseBody()).password ?? '')
-    const hash = adminPasswordHash()
-    if (loginTries.length > 5) {
-        console.log('management page: sign-in refused, too many tries')
-        return c.redirect('/login?failed=busy')
-    }
-    const ok = !!hash && (await Bun.password.verify(password, hash).catch(() => false))
-    console.log(`management page: sign-in ${ok ? 'ok' : 'failed (wrong password)'}`)
-    if (!ok) {
-        return c.redirect('/login?failed=1')
-    }
-    const token = randomBytes(32).toString('hex')
-    sessions.set(token, now + 30 * 86_400_000)
-    setCookie(c, COOKIE, token, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 30 * 86_400 })
-    return c.redirect('/')
-})
-
-admin.post('/logout', (c) => {
-    const token = getCookie(c, COOKIE)
-    if (token) sessions.delete(token)
-    return c.redirect('/login')
 })
 
 admin.get('/', (c) => {
@@ -193,7 +136,7 @@ admin.get('/', (c) => {
                 <div class="muted">
                     VRChat login: ${loginState} · lookups today: ${b.usedToday} of ${b.perDay}${b.pausedUntil ? html` · <span class="warn">paused until ${when(b.pausedUntil)}</span>` : ''} ·
                     listed: ${n.listed} · waiting for a lookup: ${n.pending} · plugins connected: ${streams()}
-                    <form class="inline" method="post" action="/logout"><button>Sign out</button></form>
+                    <a href="/_osign/logout">Sign out</a>
                 </div>
                 ${done ? html`<p class="warn">${done}</p>` : ''}
 
@@ -446,9 +389,5 @@ admin.post('/whitelist/:userId', (c) => {
     return c.redirect(`/?done=${encodeURIComponent('Whitelisted, and everything stored about them deleted.')}`)
 })
 
-// For tests: sign in without the form.
-export function testSession(): string {
-    const token = randomBytes(32).toString('hex')
-    sessions.set(token, Date.now() + 60_000)
-    return `${COOKIE}=${token}`
-}
+// For tests: the header OSign's forward-auth adds for a signed-in user.
+export const TEST_USER = { 'Remote-User': 'tester' }

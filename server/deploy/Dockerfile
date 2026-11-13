@@ -14,7 +14,6 @@ COPY --from=build /app /app
 ARG APP_VERSION=dev
 ENV VAPI_DB=/data/vapi.db \
     VAPI_COOKIE_FILE=/data/vrchat-cookie.json \
-    VAPI_ADMIN_HASH_FILE=/data/admin.hash \
     VAPI_REVIEW_TOKEN_FILE=/data/review.token \
     VAPI_PORT=3060 \
     VAPI_VERSION=${APP_VERSION} \
