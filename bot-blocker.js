@@ -100,7 +100,65 @@
         saveList(key, list);
     }
 
-    const groups = () => loadList(GROUPS_KEY);
+    // The rules, the group list and the installer's last choice live in VRCX's own settings file
+    // (VRCX.json), saved after every change. Browser storage writes to disk only now and then and
+    // can lose recent changes. The file is read once at startup, before anything is decided.
+    const FILE_KEYS = ['botBlocker.rules', 'botBlocker.groups', 'botBlocker.installStamp'];
+    const fileValues = {};
+    let fileRead = false;
+    const fileGet = (key) => (window.VRCXStorage?.Get ? fileValues[key] ?? null : localStorage.getItem(key));
+
+    function fileSet(key, value) {
+        fileValues[key] = value;
+        const storage = window.VRCXStorage;
+        if (!storage?.Set) {
+            try {
+                localStorage.setItem(key, value); // no settings file to write to
+            } catch {}
+            return;
+        }
+        Promise.resolve(storage.Set(key, value))
+            .then(() => storage.Save?.())
+            .catch((err) => console.warn(TAG, 'settings file', String(err)));
+    }
+
+    async function readSettingsFile() {
+        const storage = window.VRCXStorage;
+        const moved = [];
+        for (const key of FILE_KEYS) {
+            let value = null;
+            try {
+                value = storage?.Get ? (await storage.Get(key)) || null : localStorage.getItem(key);
+                // Settings from before the file was used move over once.
+                const old = storage?.Get ? localStorage.getItem(key) : null;
+                if (old !== null) {
+                    if (value === null) {
+                        value = old;
+                        await storage.Set(key, old);
+                    }
+                    moved.push(key);
+                }
+            } catch {}
+            fileValues[key] = value;
+        }
+        if (moved.length) {
+            try {
+                await storage.Save?.();
+                moved.forEach((key) => localStorage.removeItem(key));
+            } catch {}
+        }
+        fileRead = true;
+    }
+
+    function groups() {
+        try {
+            return JSON.parse(fileGet(GROUPS_KEY) || '[]');
+        } catch {
+            return [];
+        }
+    }
+
+    const saveGroups = (list) => fileSet(GROUPS_KEY, JSON.stringify(list));
 
     // The rules, all switchable on the Bot Blocker page. Every checked rule without "always" has to
     // fit for a block; a checked rule with "always" blocks by itself. "Always" starts off for the
@@ -149,7 +207,7 @@
     function settings() {
         let saved = {};
         try {
-            saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+            saved = JSON.parse(fileGet(SETTINGS_KEY) || '{}');
         } catch {}
         const rules = {};
         for (const r of RULES) {
@@ -163,9 +221,7 @@
     }
 
     function saveSettings(next) {
-        try {
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
-        } catch {}
+        fileSet(SETTINGS_KEY, JSON.stringify(next));
         // A change can only add blocks: check everyone already here against the new rules.
         for (const [userId, name] of present) {
             evaluate(name, userId, { rule: 'all' });
@@ -818,14 +874,12 @@
     // "Reset options to recommended defaults" box was ticked, the default rules. After that the page
     // decides. The group list, the block history and the never-block-again list always stay.
     function applyInstallChoice() {
-        if (INSTALL_STAMP === 'dev' || localStorage.getItem('botBlocker.installStamp') === INSTALL_STAMP) {
+        if (INSTALL_STAMP === 'dev' || fileGet('botBlocker.installStamp') === INSTALL_STAMP) {
             return;
         }
-        try {
-            const base = RESET_RULES ? DEFAULT_SETTINGS : settings();
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...base, share: SHARE_DEFAULT }));
-            localStorage.setItem('botBlocker.installStamp', INSTALL_STAMP);
-        } catch {}
+        const base = RESET_RULES ? DEFAULT_SETTINGS : settings();
+        fileSet(SETTINGS_KEY, JSON.stringify({ ...base, share: SHARE_DEFAULT }));
+        fileSet('botBlocker.installStamp', INSTALL_STAMP);
     }
 
     // The server pushes a 'change' event the moment the list changes; the browser reconnects the
@@ -933,7 +987,7 @@
         if (isListed(group.id)) {
             return;
         }
-        saveList(GROUPS_KEY, [...groups(), { ...group, addedAt: new Date().toISOString() }]);
+        saveGroups([...groups(), { ...group, addedAt: new Date().toISOString() }]);
         console.info(TAG, 'now blocking members of', group.name, group.id);
         // Members already in the instance get checked right away.
         for (const [userId, name] of present) {
@@ -944,7 +998,7 @@
     }
 
     function removeGroup(groupId) {
-        saveList(GROUPS_KEY, groups().filter((g) => g.id !== groupId));
+        saveGroups(groups().filter((g) => g.id !== groupId));
         renderPanel();
         syncGroupDialog();
     }
@@ -1303,7 +1357,8 @@
         }
     }
 
-    const hasLabel = (el) => [...el.querySelectorAll('*')].some((c) => !c.children.length && c.textContent.trim());
+    // VRCX can put an entry's name straight next to its icon, so look at text, not elements.
+    const hasLabel = (el) => !!el.textContent.trim();
 
     function ensureMenuEntry() {
         const menus = [...document.querySelectorAll('[data-sidebar="menu"]')];
@@ -1338,10 +1393,13 @@
         if (icon) {
             icon.className = icon.className.replace(/\bri-[a-z0-9-]+/g, '').trim() + ' ri-robot-2-line';
         }
-        // The label is the innermost element with text of its own.
-        const label = [...entry.querySelectorAll('*')].find((el) => !el.children.length && el.textContent.trim());
-        if (label) {
-            label.textContent = 'Bot Blocker';
+        // The name is the first bit of text in the entry.
+        const walker = document.createTreeWalker(entry, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (node.nodeValue.trim()) {
+                node.nodeValue = 'Bot Blocker';
+                break;
+            }
         }
         entry.querySelectorAll('[title]').forEach((el) => (el.title = 'Bot Blocker'));
         entry.querySelectorAll('[aria-label]').forEach((el) => el.setAttribute('aria-label', 'Bot Blocker'));
@@ -1524,21 +1582,30 @@
         // Every log line passes through here: the batch VRCX reads at startup and each line
         // the game pushes while it runs. (Hooking only the startup batch missed every live join.)
         const original = service.parseRawGameLog.bind(service);
-        const wrapped = function (...args) {
-            const entry = original(...args);
+        const safeInspect = (entry) => {
             try {
                 inspect(entry);
             } catch (err) {
                 console.error(TAG, err);
             }
+        };
+        // Lines that arrive before the settings file is read wait for it, in order.
+        const early = [];
+        const wrapped = function (...args) {
+            const entry = original(...args);
+            fileRead ? safeInspect(entry) : early.push(entry);
             return entry;
         };
         wrapped.__botBlocker = true;
         service.parseRawGameLog = wrapped;
         watchUnblocks(window.request.playerModerationRequest);
-        startShared();
-        startUpdates();
-        console.info(TAG, 'watching joins', DRY_RUN ? '(dry run)' : '', `- ${groups().length} blocked group(s)`);
+        readSettingsFile().then(() => {
+            early.splice(0).forEach(safeInspect);
+            startShared();
+            startUpdates();
+            renderPanel();
+            console.info(TAG, 'watching joins', DRY_RUN ? '(dry run)' : '', `- ${groups().length} blocked group(s)`);
+        });
         return true;
     }
 
