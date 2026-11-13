@@ -116,6 +116,11 @@ admin.get('/login', (c) =>
             'Bot Blocker - sign in',
             adminPasswordHash()
                 ? html`<h1>Bot Blocker</h1>
+                      ${c.req.query('failed') === 'busy'
+                          ? html`<p class="warn">Too many tries: wait a minute.</p>`
+                          : c.req.query('failed')
+                            ? html`<p class="warn">Wrong password.</p>`
+                            : ''}
                       <form method="post" action="/login">
                           <input type="password" name="password" autofocus /> <button class="ok">Sign in</button>
                       </form>`
@@ -131,9 +136,14 @@ admin.post('/login', async (c) => {
     loginTries.push(now)
     const password = String((await c.req.parseBody()).password ?? '')
     const hash = adminPasswordHash()
-    const ok = loginTries.length <= 5 && !!hash && (await Bun.password.verify(password, hash).catch(() => false))
+    if (loginTries.length > 5) {
+        console.log('management page: sign-in refused, too many tries')
+        return c.redirect('/login?failed=busy')
+    }
+    const ok = !!hash && (await Bun.password.verify(password, hash).catch(() => false))
+    console.log(`management page: sign-in ${ok ? 'ok' : 'failed (wrong password)'}`)
     if (!ok) {
-        return c.redirect('/login')
+        return c.redirect('/login?failed=1')
     }
     const token = randomBytes(32).toString('hex')
     sessions.set(token, now + 30 * 86_400_000)
