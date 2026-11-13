@@ -84,8 +84,9 @@ How they combine:
 - **Exclude friends** (on by default) keeps friends out of all of it.
 - Members of a group on your list are always blocked (see above).
 
-Changing a rule also checks everyone already in your instance. Installing a new version resets
-the rules to these defaults; your group list and block history stay.
+Changing a rule also checks everyone already in your instance. When you update, the installer
+offers **Change to recommended settings**: ticked, your rules go back to these defaults once;
+unticked, they stay as you set them. Your group list and block history stay either way.
 
 **Nobody is blocked twice.** The plugin remembers everyone it has blocked and never checks them
 again. So if you unblock someone it caught, in VRChat or in VRCX, they stay unblocked. It also

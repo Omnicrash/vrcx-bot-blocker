@@ -47,25 +47,47 @@ Page custom SharePage SharePageLeave
 ; The shared blocklist: on unless unchecked here (or /NOSHARE on a silent install).
 Var Share
 Var ShareBox
+Var Reset
+Var ResetBox
+Var HadBefore
 Function SharePage
     !insertmacro MUI_HEADER_TEXT "Shared blocklist" ""
     nsDialogs::Create 1018
     Pop $0
-    ${NSD_CreateCheckbox} 0 0 100% 12u "Use and contribute to the shared blocklist"
+    ${NSD_CreateCheckbox} 0 0 100% 12u "Use the shared blocklist"
     Pop $ShareBox
-    ${NSD_CreateLabel} 12u 16u -12u 60u "Blocks the bots other users have reported, often before they reach you, and reports the bots you block that pass the shared list's checks. The server checks every report on VRChat itself before it is listed.$\r$\n$\r$\nSent: the blocked player's ID and name, what they were caught on, and a random ID for this install. Nothing about you or your VRChat account.$\r$\n$\r$\nYou can switch it off later on the Bot Blocker page in VRCX."
+    ${NSD_CreateLabel} 12u 16u -12u 52u "Blocks the bots other users have reported, often before they reach you, and reports the bots you block that pass the shared list's checks. The server checks every report on VRChat itself before it is listed.$\r$\n$\r$\nSent: the blocked player's ID and name, what they were caught on, and a random ID for this install. Nothing about you or your VRChat account.$\r$\n$\r$\nYou can switch it off later on the Bot Blocker page in VRCX."
     Pop $0
     ${If} $Share == 1
         ${NSD_Check} $ShareBox
+    ${EndIf}
+    ; Only when updating: a fresh install already has the recommended settings.
+    ${If} $HadBefore == 1
+        ${NSD_CreateCheckbox} 0 74u 100% 12u "Change to recommended settings (highly recommended for this update)"
+        Pop $ResetBox
+        ${If} $Reset == 1
+            ${NSD_Check} $ResetBox
+        ${EndIf}
     ${EndIf}
     nsDialogs::Show
 FunctionEnd
 Function SharePageLeave
     ${NSD_GetState} $ShareBox $Share
+    ${If} $HadBefore == 1
+        ${NSD_GetState} $ResetBox $Reset
+    ${EndIf}
 FunctionEnd
 
 Function .onInit
     StrCpy $Share 1
+    StrCpy $Reset 0
+    StrCpy $HadBefore 0
+    ; A previous version leaves its entry in Windows' Apps list.
+    ReadRegStr $0 HKCU "${UNINST_KEY}" "DisplayVersion"
+    ${If} $0 != ""
+        StrCpy $HadBefore 1
+        StrCpy $Reset 1
+    ${EndIf}
     ${GetParameters} $0
     ClearErrors
     ${GetOptions} $0 "/NOSHARE" $1
@@ -100,7 +122,7 @@ Section "VRCX Bot Blocker" SecMain
     File "${DIST}/icon.ico"
 
     DetailPrint "Adding the plugin to VRCX..."
-    nsExec::ExecToLog '"$INSTDIR\botblocker-helper.exe" install "${CUSTOM_JS}" "$INSTDIR\bot-blocker.js" share=$Share'
+    nsExec::ExecToLog '"$INSTDIR\botblocker-helper.exe" install "${CUSTOM_JS}" "$INSTDIR\bot-blocker.js" share=$Share reset=$Reset'
     Pop $0
     ${If} $0 != 0
         MessageBox MB_OK|MB_ICONSTOP "Couldn't add the plugin to $APPDATA\VRCX\custom.js (code $0). Nothing was changed."

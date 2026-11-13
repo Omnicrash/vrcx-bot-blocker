@@ -71,6 +71,11 @@ build_macos() {
     fill installer/macos/distribution.xml "$stage/distribution.xml"
     pkgbuild --nopayload --scripts "$stage/scripts" --identifier net.omnicrash.vrcx-bot-blocker \
         --version "$version" "$stage/component.pkg"
+    mkdir -p "$stage/reset-scripts"
+    printf '#!/bin/sh\ntouch /tmp/net.omnicrash.vrcx-bot-blocker.reset\nexit 0\n' > "$stage/reset-scripts/postinstall"
+    chmod +x "$stage/reset-scripts/postinstall"
+    pkgbuild --nopayload --scripts "$stage/reset-scripts" --identifier net.omnicrash.vrcx-bot-blocker.reset \
+        --version "$version" "$stage/reset.pkg"
     mkdir -p "$stage/share-scripts"
     cp installer/macos/share-postinstall "$stage/share-scripts/postinstall"
     chmod +x "$stage/share-scripts/postinstall"

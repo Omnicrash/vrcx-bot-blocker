@@ -8,8 +8,13 @@
     <domains enable_localSystem="true"/>
     <choices-outline>
         <line choice="share"/>
+        <line choice="reset"/>
         <line choice="main"/>
     </choices-outline>
+    <choice id="reset" title="Change to recommended settings (highly recommended for this update)" start_selected="true"
+            description="Puts the blocking rules back to the recommended defaults. Your group list and block history stay. On a first install this changes nothing.">
+        <pkg-ref id="net.omnicrash.vrcx-bot-blocker.reset"/>
+    </choice>
     <choice id="share" title="Use and contribute to the shared blocklist" start_selected="true"
             description="Blocks the bots other users have reported, often before they reach you, and reports the bots you block that pass the shared list's checks. The server checks every report on VRChat itself before it is listed. Sent: the blocked player's ID and name, what they were caught on, and a random ID for this install. Nothing about you or your VRChat account. You can switch it off later on the Bot Blocker page in VRCX.">
         <pkg-ref id="net.omnicrash.vrcx-bot-blocker.share"/>
@@ -18,5 +23,6 @@
         <pkg-ref id="net.omnicrash.vrcx-bot-blocker"/>
     </choice>
     <pkg-ref id="net.omnicrash.vrcx-bot-blocker.share" version="@VERSION@" onConclusion="none">share.pkg</pkg-ref>
+    <pkg-ref id="net.omnicrash.vrcx-bot-blocker.reset" version="@VERSION@" onConclusion="none">reset.pkg</pkg-ref>
     <pkg-ref id="net.omnicrash.vrcx-bot-blocker" version="@VERSION@" onConclusion="none">component.pkg</pkg-ref>
 </installer-gui-script>

@@ -2,7 +2,7 @@
 // NSIS's own text functions, which would round-trip other people's UTF-8 through the ANSI code
 // page. Everything here works on raw bytes.
 //
-//   botblocker-helper install <custom.js> <bot-blocker.js> [share=0|1]
+//   botblocker-helper install <custom.js> <bot-blocker.js> [share=0|1] [reset=0|1]
 //                                                           add or replace our block; share is the
 //                                                           installer's shared-blocklist checkbox
 //   botblocker-helper uninstall <custom.js>                  take our block out again
@@ -100,7 +100,7 @@ static int backup(const wchar_t *path)
 
 // Appends the plugin to out, rewriting the two lines the installer owns: the shared-blocklist
 // choice and the install stamp the plugin uses to notice a fresh install.
-static size_t put_plugin(char *out, const Buf *js, int share, unsigned long long stamp)
+static size_t put_plugin(char *out, const Buf *js, int share, int reset, unsigned long long stamp)
 {
     size_t n = 0;
     const char *p = js->data, *end = js->data + js->len;
@@ -111,6 +111,8 @@ static size_t put_plugin(char *out, const Buf *js, int share, unsigned long long
         size_t len = stop - p;
         if (len < sizeof line && (memcpy(line, p, len), line[len] = 0, strstr(line, "@SHARE_DEFAULT@"))) {
             n += sprintf(out + n, "    const SHARE_DEFAULT = %s; // @SHARE_DEFAULT@", share ? "true" : "false");
+        } else if (len < sizeof line && strstr(line, "@RESET_RULES@")) {
+            n += sprintf(out + n, "    const RESET_RULES = %s; // @RESET_RULES@", reset ? "true" : "false");
         } else if (len < sizeof line && strstr(line, "@INSTALL_STAMP@")) {
             n += sprintf(out + n, "    const INSTALL_STAMP = '%llu'; // @INSTALL_STAMP@", stamp);
         } else {
@@ -125,7 +127,7 @@ static size_t put_plugin(char *out, const Buf *js, int share, unsigned long long
     return n;
 }
 
-static int install(const wchar_t *target, const wchar_t *plugin, int share)
+static int install(const wchar_t *target, const wchar_t *plugin, int share, int reset)
 {
     Buf js, cur;
     if (!read_file(plugin, &js)) {
@@ -160,7 +162,7 @@ static int install(const wchar_t *target, const wchar_t *plugin, int share)
     FILETIME ft;
     GetSystemTimeAsFileTime(&ft);
     unsigned long long stamp = (((unsigned long long)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000;
-    n += put_plugin(out + n, &js, share, stamp);
+    n += put_plugin(out + n, &js, share, reset, stamp);
     n += sprintf(out + n, "\r\n%s\r\n", END);
 
     if (!write_file(target, out, n)) {
@@ -248,8 +250,13 @@ static int restart(void)
 
 int wmain(int argc, wchar_t **argv)
 {
-    if ((argc == 4 || argc == 5) && !wcscmp(argv[1], L"install")) {
-        return install(argv[2], argv[3], argc == 4 || wcscmp(argv[4], L"share=0") != 0);
+    if (argc >= 4 && argc <= 6 && !wcscmp(argv[1], L"install")) {
+        int share = 1, reset = 0;
+        for (int i = 4; i < argc; i++) {
+            if (!wcscmp(argv[i], L"share=0")) share = 0;
+            if (!wcscmp(argv[i], L"reset=1")) reset = 1;
+        }
+        return install(argv[2], argv[3], share, reset);
     }
     if (argc == 3 && !wcscmp(argv[1], L"uninstall")) {
         return uninstall(argv[2]);

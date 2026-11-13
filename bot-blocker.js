@@ -27,6 +27,7 @@
     // The installer's "shared blocklist" checkbox and when it ran; both lines are rewritten by it.
     const SHARE_DEFAULT = true; // @SHARE_DEFAULT@
     const INSTALL_STAMP = 'dev'; // @INSTALL_STAMP@
+    const RESET_RULES = false; // @RESET_RULES@ - the installer's "Change to recommended settings"
     const SYNC_EVERY_MS = 30 * 60_000; // the fallback; changes arrive through the stream at once
     const SHARED_BLOCK_GAP_MS = 15_000; // listed accounts are blocked one at a time, this far apart
 
@@ -645,15 +646,16 @@
         } catch {}
     }
 
-    // A fresh install starts from the default rules, once, with the installer's sharing choice;
-    // after that the page decides. The group list, the block history and the never-block-again
-    // list are the user's own and stay.
+    // Each installer run applies its choices once: the sharing checkbox, and, only when its
+    // "Change to recommended settings" box was ticked, the default rules. After that the page
+    // decides. The group list, the block history and the never-block-again list always stay.
     function applyInstallChoice() {
         if (INSTALL_STAMP === 'dev' || localStorage.getItem('botBlocker.installStamp') === INSTALL_STAMP) {
             return;
         }
         try {
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...DEFAULT_SETTINGS, share: SHARE_DEFAULT }));
+            const base = RESET_RULES ? DEFAULT_SETTINGS : settings();
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...base, share: SHARE_DEFAULT }));
             localStorage.setItem('botBlocker.installStamp', INSTALL_STAMP);
         } catch {}
     }

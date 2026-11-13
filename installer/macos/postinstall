@@ -29,8 +29,12 @@ marker=/tmp/net.omnicrash.vrcx-bot-blocker.share
 share=0
 [ -f "$marker" ] && share=1
 rm -f "$marker"
+reset_marker=/tmp/net.omnicrash.vrcx-bot-blocker.reset
+reset=0
+[ -f "$reset_marker" ] && reset=1
+rm -f "$reset_marker"
 
-as_user /bin/sh -c '. "$1/common.sh" && bb_install "$2/custom.js" "$1/bot-blocker.js" "$3"' sh "$ours" "$vrcx" "$share"
+as_user /bin/sh -c '. "$1/common.sh" && bb_install "$2/custom.js" "$1/bot-blocker.js" "$3" "$4"' sh "$ours" "$vrcx" "$share" "$reset"
 
 # Restart VRCX when it runs, so the plugin loads now.
 if pgrep -x VRCX >/dev/null 2>&1; then
