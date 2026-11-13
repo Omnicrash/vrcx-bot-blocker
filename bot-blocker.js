@@ -27,7 +27,7 @@
     // The installer's "shared blocklist" checkbox and when it ran; both lines are rewritten by it.
     const SHARE_DEFAULT = true; // @SHARE_DEFAULT@
     const INSTALL_STAMP = 'dev'; // @INSTALL_STAMP@
-    const SYNC_EVERY_MS = 10 * 60_000;
+    const SYNC_EVERY_MS = 30 * 60_000; // the fallback; changes arrive through the stream at once
     const SHARED_BLOCK_GAP_MS = 15_000; // listed accounts are blocked one at a time, this far apart
 
     const avatarByName = new Map(); // display name -> last avatar name seen in the log
@@ -72,13 +72,13 @@
     const RULES = ['name', 'robot', 'visitor', 'bio', 'nuisance', 'probable', 'age'];
     const FROM_LOG = ['name']; // known from the game log alone; the rest needs the profile
     const RULE_LABELS = {
-        name: 'default name',
+        name: 'Default name',
         robot: 'Robot avatar',
         visitor: 'Visitor rank',
         bio: 'in bio',
         nuisance: 'Nuisance',
         probable: 'Almost Nuisance',
-        age: 'new account'
+        age: 'New account'
     };
     const DEFAULT_SETTINGS = {
         excludeFriends: true,
@@ -135,6 +135,10 @@
         saveSettings({ ...settings(), share: !!value });
         if (value) {
             syncShared();
+            listen();
+        } else {
+            stream?.close();
+            stream = null;
         }
     }
 
@@ -259,11 +263,14 @@
                 ageDays: days
             };
             let reason = null;
+            let caughtBy = null; // which of this user's rules fired: sent along as research data
             if (togetherPossible && (fromLogOnly || here) && together.every((r) => fits[r])) {
                 reason = together.map((r) => (r === 'bio' ? `"${fits.bio}" in bio` : RULE_LABELS[r])).join(' + ');
+                caughtBy = { together: [...together] };
             }
             const hit = here && alone.find((r) => fits[r]);
             if (!reason && hit) {
+                caughtBy = { always: hit };
                 reason =
                     hit === 'age'
                         ? `account ${Math.max(0, Math.floor(days))} day(s) old`
@@ -278,6 +285,7 @@
                 if (member) {
                     reason = `member of ${member.name}`;
                     viaGroup = member;
+                    caughtBy = { group: true };
                 }
             }
             if (reason) {
@@ -287,7 +295,7 @@
                 if (viaGroup) {
                     grounds = s.syncGroups ? { ...grounds, group: viaGroup.name, groupId: viaGroup.id } : null;
                 }
-                await block(displayName, userId, reason, grounds);
+                await block(displayName, userId, reason, grounds, false, caughtBy);
             }
         } catch (err) {
             console.warn(TAG, 'could not check', displayName, userId, err);
@@ -302,43 +310,52 @@
     }
 
     // `grounds`: what the player was caught on, reported to the shared list. `shared`: the block
-    // came from that list, so it is neither reported back nor announced.
-    async function block(displayName, userId, reason, grounds = null, shared = false) {
+    // came from that list, so it is neither reported back nor announced, and is undone again when
+    // the list drops the player. Returns whether VRChat took the block.
+    async function block(displayName, userId, reason, grounds = null, shared = false, caughtBy = null) {
         if (DRY_RUN) {
             console.info(TAG, 'would block', displayName, userId, `(${reason})`);
-            return;
+            return false;
         }
         handled.add(userId);
         try {
             await window.request.playerModerationRequest.sendPlayerModeration({ moderated: userId, type: 'block' });
             remember(BLOCKED_KEY, { userId, displayName, reason, at: new Date().toISOString() });
             console.info(TAG, 'blocked', displayName, userId, `(${reason})`);
-            if (!shared) {
+            if (shared) {
+                saveList(SHARED_BLOCKS_KEY, [...new Set([...loadList(SHARED_BLOCKS_KEY), userId])]);
+            } else {
                 try {
                     AppApi.DesktopNotification('Bot Blocker', `Blocked ${displayName}: ${reason}`, '');
                 } catch {}
                 if (grounds) {
-                    report(userId, displayName, grounds);
+                    report(userId, displayName, grounds, caughtBy);
                 }
             }
             renderPanel();
+            return true;
         } catch (err) {
             handled.delete(userId); // let a later join retry
             console.error(TAG, 'block failed for', displayName, userId, err);
+            return false;
         }
     }
 
     // ---- the shared blocklist ------------------------------------------------------------------
     //
-    // Blocks go to vapi.omnicrash.net with what they were caught on; the server re-checks them
-    // and lists the ones that hold up. Every plugin syncs that list and blocks what's on it, one
-    // account at a time. When the server can't be reached nothing is shown: reports wait in a
-    // queue and syncing picks up again by itself.
+    // Blocks go to vapi.omnicrash.net with what the plugin saw; the server looks the player up
+    // itself and lists them when its own rules say so. Every plugin keeps a copy of that list,
+    // told about changes the moment they happen through a kept-open stream, and blocks what's on
+    // it a few accounts a minute, each looked up first. When the server can't be reached nothing is
+    // shown: reports wait in a queue and the stream reconnects by itself.
 
     const INSTALL_KEY = 'botBlocker.install';
     const OUTBOX_KEY = 'botBlocker.outbox';
     const SHARED_KEY = 'botBlocker.shared';
     const SHARED_SEQ_KEY = 'botBlocker.sharedSeq';
+    const SHARED_BLOCKS_KEY = 'botBlocker.sharedBlocks'; // blocks that came from the list
+    const SERVER_RULES_KEY = 'botBlocker.serverRules';
+    let unblockQuietly = null; // VRCX's own unblock, without our never-block-again hook
 
     function installId() {
         let id = localStorage.getItem(INSTALL_KEY);
@@ -351,10 +368,10 @@
         return id;
     }
 
-    // The facts behind a block, in the server's terms. Only what's true is sent.
+    // What the plugin saw, in the server's terms. Only the signs the server knows are sent.
     function groundsOf(fits) {
         const g = {};
-        for (const r of ['name', 'robot', 'visitor', 'nuisance', 'probable']) {
+        for (const r of ['name', 'robot', 'visitor']) {
             if (fits[r]) {
                 g[r] = true;
             }
@@ -362,38 +379,33 @@
         if (fits.bio) {
             g.bio = fits.bio;
         }
-        // Always sent when known: the server may accept on account age even when this user doesn't.
         if (Number.isFinite(fits.ageDays)) {
             g.age = Math.max(0, Math.floor(fits.ageDays));
         }
         return g;
     }
 
-    // What the server accepts (its management page sets it; fetched with every sync). Until the
-    // first sync, the default rule set.
-    const SERVER_RULES_KEY = 'botBlocker.serverRules';
-    function meetsMinimum(g) {
+    // Whether the server would take the report: its own rules (fetched with every sync), else the
+    // defaults. Any word counts, since a word the server doesn't know yet goes to its review.
+    function worthReporting(g) {
         let r = null;
         try {
             r = JSON.parse(localStorage.getItem(SERVER_RULES_KEY) || 'null');
         } catch {}
-        if (!r?.rules) {
-            return (g.name && g.robot && g.visitor) || !!g.bio || !!g.nuisance;
+        if (!r?.counted) {
+            r = { counted: { name: true, robot: true, visitor: false, age: true }, needed: 2, ageDays: 7 };
         }
-        const holds = (k) => (k === 'age' ? Number.isFinite(g.age) && g.age < r.ageDays : !!g[k]);
-        const on = Object.keys(r.rules).filter((k) => r.rules[k].on);
-        const alone = on.filter((k) => r.rules[k].always);
-        const together = on.filter((k) => !r.rules[k].always);
-        return alone.some(holds) || (together.length > 0 && together.every(holds));
+        const holds = { name: !!g.name, robot: !!g.robot, visitor: !!g.visitor, age: Number.isFinite(g.age) && g.age < r.ageDays };
+        return Object.keys(holds).filter((k) => r.counted[k] && holds[k]).length >= r.needed || !!g.bio;
     }
 
-    function report(userId, displayName, grounds) {
-        // Group reports go to manual review, so they don't need to meet the minimum.
-        if (!settings().share || !(grounds.group || meetsMinimum(grounds))) {
+    function report(userId, displayName, grounds, caughtBy = null) {
+        // Group reports go to manual review, so they don't have to meet the server's rules.
+        if (!settings().share || !(grounds.group || worthReporting(grounds))) {
             return;
         }
         const outbox = loadList(OUTBOX_KEY);
-        outbox.push({ userId, displayName, grounds });
+        outbox.push({ userId, displayName, grounds, caughtBy });
         saveList(OUTBOX_KEY, outbox.slice(-500));
         flushOutbox();
     }
@@ -441,30 +453,39 @@
         }
     }
 
+    let syncing = false;
+    let syncAgain = false;
     async function syncShared() {
         if (!settings().share) {
             return;
         }
+        if (syncing) {
+            syncAgain = true; // a change arrived mid-sync: one more round after this one
+            return;
+        }
+        syncing = true;
         try {
-            const rules = await fetch(`${API}/rules`).then((res) => (res.ok ? res.json() : null));
-            if (rules?.rules) {
-                localStorage.setItem(SERVER_RULES_KEY, JSON.stringify(rules));
-            }
-        } catch {}
-        try {
+            try {
+                const rules = await fetch(`${API}/rules`).then((res) => (res.ok ? res.json() : null));
+                if (rules?.counted) {
+                    localStorage.setItem(SERVER_RULES_KEY, JSON.stringify(rules));
+                }
+            } catch {}
             const list = sharedList();
+            const dropped = [];
             let since = Number(localStorage.getItem(SHARED_SEQ_KEY) || 0);
             for (let page = 0; page < 50; page++) {
                 const res = await fetch(`${API}/list?since=${since}`);
-                if (!res.ok) {
+                const body = res.ok ? await res.json().catch(() => null) : null;
+                if (!body || !Number.isFinite(body.seq)) {
                     return;
                 }
-                const body = await res.json();
                 for (const e of body.added || []) {
                     list[e.userId] = { displayName: e.displayName, grounds: e.grounds };
                 }
                 for (const id of body.removed || []) {
                     delete list[id];
+                    dropped.push(id);
                 }
                 since = body.seq;
                 localStorage.setItem(SHARED_KEY, JSON.stringify(list));
@@ -473,8 +494,34 @@
                     break;
                 }
             }
+            await undoSharedBlocks(dropped);
             renderPanel();
-        } catch {}
+        } catch {
+        } finally {
+            syncing = false;
+            if (syncAgain) {
+                syncAgain = false;
+                syncShared();
+            }
+        }
+    }
+
+    // The list dropped these players: blocks that came from it are undone. Blocks the user's own
+    // rules made stay.
+    async function undoSharedBlocks(ids) {
+        const fromList = new Set(loadList(SHARED_BLOCKS_KEY));
+        for (const userId of ids) {
+            if (!fromList.has(userId) || !unblockQuietly) {
+                continue;
+            }
+            try {
+                await unblockQuietly({ moderated: userId, type: 'block' });
+                fromList.delete(userId);
+                handled.delete(userId); // the user's own rules may still catch them later
+                console.info(TAG, 'unblocked, dropped from the shared list:', userId);
+            } catch {}
+        }
+        saveList(SHARED_BLOCKS_KEY, [...fromList]);
     }
 
     // Whether this user's own rules would block an account with these grounds.
@@ -488,8 +535,8 @@
             robot: !!g.robot,
             visitor: !!g.visitor,
             bio: !!g.bio,
-            nuisance: !!g.nuisance,
-            probable: !!g.probable,
+            nuisance: false,
+            probable: false,
             age: Number.isFinite(g.age) && g.age < s.ageDays
         };
         const on = RULES.filter((r) => s.rules[r].on);
@@ -498,26 +545,51 @@
         return alone.some((r) => fits[r]) || (together.length > 0 && together.every((r) => fits[r]));
     }
 
-    function isFriend(userId) {
-        return !!store('Friend')?.friends?.has?.(userId);
+    // Accounts that couldn't be checked or blocked wait before the next try, and are given up on
+    // after a few; nothing is retried every tick.
+    const sharedSkips = new Map(); // user id -> { until, tries }
+    function skipShared(userId) {
+        const tries = (sharedSkips.get(userId)?.tries ?? 0) + 1;
+        sharedSkips.set(userId, { until: tries >= 4 ? Infinity : Date.now() + tries * 3_600_000, tries });
     }
 
-    // One listed account per tick: the next one this user's rules allow, not already handled.
+    // One listed account per tick: the next one this user's rules allow. It's looked up right
+    // before: a friend (or anyone who can't be looked up) is never blocked from the list.
+    let blockingShared = false;
     async function blockNextShared() {
         const s = settings();
-        if (!s.share || DRY_RUN) {
+        if (!s.share || DRY_RUN || blockingShared) {
             return;
         }
-        const list = sharedList();
-        for (const [userId, e] of Object.entries(list)) {
-            if (handled.has(userId) || (s.excludeFriends && isFriend(userId)) || !rulesAllow(e.grounds, s)) {
-                continue;
+        blockingShared = true;
+        try {
+            const list = sharedList();
+            for (const [userId, e] of Object.entries(list)) {
+                if (handled.has(userId) || (sharedSkips.get(userId)?.until ?? 0) > Date.now() || !rulesAllow(e.grounds, s)) {
+                    continue;
+                }
+                let user = null;
+                try {
+                    user = await queued(() => getUser(userId));
+                } catch {}
+                if (!user) {
+                    skipShared(userId);
+                    return;
+                }
+                if (s.excludeFriends && user.isFriend) {
+                    handled.add(userId); // never again, for this session
+                    return;
+                }
+                const why = e.grounds.group
+                    ? [`group ${e.grounds.group}`]
+                    : ['name', 'robot', 'visitor', 'bio'].filter((r) => e.grounds[r]).map((r) => (r === 'bio' ? `"${e.grounds.bio}" in bio` : RULE_LABELS[r]));
+                if (!(await block(e.displayName, userId, `Shared list: ${why.join(' + ')}`, null, true))) {
+                    skipShared(userId);
+                }
+                return;
             }
-            const why = e.grounds.group
-                ? [`group ${e.grounds.group}`]
-                : Object.keys(e.grounds).map((r) => (r === 'bio' ? `"${e.grounds.bio}" in bio` : RULE_LABELS[r] || r));
-            await block(e.displayName, userId, `shared list: ${why.join(' + ')}`, null, true);
-            return;
+        } finally {
+            blockingShared = false;
         }
     }
 
@@ -532,13 +604,34 @@
         } catch {}
     }
 
+    // The server pushes a 'change' event the moment the list changes; the browser reconnects the
+    // stream by itself after a drop. A slow poll covers anything the stream missed.
+    let stream = null;
+    function listen() {
+        if (stream || typeof EventSource === 'undefined' || !settings().share) {
+            return;
+        }
+        try {
+            stream = new EventSource(`${API}/stream`);
+            stream.addEventListener('change', (ev) => {
+                if (Number(ev.data) !== Number(localStorage.getItem(SHARED_SEQ_KEY) || 0)) {
+                    syncShared();
+                }
+            });
+        } catch {
+            stream = null;
+        }
+    }
+
     function startShared() {
         applyInstallChoice();
         syncShared();
         flushOutbox();
+        listen();
         setInterval(() => {
             syncShared();
             flushOutbox();
+            listen();
         }, SYNC_EVERY_MS);
         setInterval(blockNextShared, SHARED_BLOCK_GAP_MS);
     }
@@ -573,6 +666,7 @@
             return;
         }
         const original = moderation.deletePlayerModeration.bind(moderation);
+        unblockQuietly = original; // undoing a shared-list block must not land on the never-block list
         const wrapped = function (params) {
             if (params?.type === 'block' && params.moderated) {
                 handled.add(params.moderated);
@@ -712,6 +806,7 @@
         }
     }
 
+    const capitalize = (t) => t.charAt(0).toUpperCase() + t.slice(1);
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
     // ---- UI: the Bot Blocker page --------------------------------------------------------------
@@ -818,7 +913,7 @@
                                   (b) => `<div class="bb-row">
                                     <span class="bb-muted">${esc(time(b.at))}</span>
                                     <span class="bb-name">${esc(b.displayName)}</span>
-                                    <span class="bb-muted">${esc(b.reason || 'default account')}</span></div>`
+                                    <span class="bb-muted">${esc(capitalize(b.reason || 'Default account'))}</span></div>`
                               )
                               .join('')
                         : '<div class="bb-empty">Nobody blocked yet.</div>'

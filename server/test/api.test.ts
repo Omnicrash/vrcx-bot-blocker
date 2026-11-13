@@ -1,97 +1,118 @@
 import { expect, test } from 'bun:test'
 import { app } from '../src/app'
-import { unlist } from '../src/reports'
+import { removeByHand, setWord } from '../src/reports'
 import { calls, users } from './setup'
 
-const BOT = 'usr_00000000-0000-0000-0000-00000000f478'
-const HEXER = 'usr_11111111-1111-1111-1111-111111111111'
-const TROLL = 'usr_22222222-2222-2222-2222-222222222222'
-const LIAR = 'usr_33333333-3333-3333-3333-333333333333'
-const GONE = 'usr_44444444-4444-4444-4444-444444444444'
 const ROBOT = 'https://api.vrchat.cloud/api/1/image/file_0e8c4e32-7444-44ea-ade4-313c010d4bae/1/256'
-const NEWCOMER = 'usr_55555555-5555-5555-5555-55555555abcd'
-users.set(BOT, { id: BOT, displayName: 'Ulvor6ex f478', tags: [], iconUrl: ROBOT })
-users.set(NEWCOMER, { id: NEWCOMER, displayName: 'Plimb abcd', tags: [], iconUrl: 'https://api.vrchat.cloud/api/1/image/file_12b39aaf-c132-4156-9251-b63652cb4d79/1/256' })
-users.set(HEXER, { id: HEXER, displayName: 'Hexer', bio: 'cheats at hexed(.)cc', tags: ['system_trust_basic', 'system_trust_known'] })
-users.set(TROLL, { id: TROLL, displayName: 'Troll', tags: ['system_trust_basic', 'system_troll'] })
-users.set(LIAR, { id: LIAR, displayName: 'Real Person', tags: ['system_trust_basic'] })
+const OTHER_ICON = 'https://api.vrchat.cloud/api/1/image/file_12b39aaf-c132-4156-9251-b63652cb4d79/1/256'
+const today = new Date().toISOString().slice(0, 10)
+
+const BOT = 'usr_00000000-0000-0000-0000-00000000f478'
+const OLDTIMER = 'usr_11111111-1111-1111-1111-11111111abcd' // default name, years old, not in the Robot
+const SELLER = 'usr_22222222-2222-2222-2222-222222222222' // a new site in the pronouns
+const GONE = 'usr_44444444-4444-4444-4444-444444444444'
+users.set(BOT, { id: BOT, displayName: 'Ulvor6ex f478', tags: [], iconUrl: ROBOT, date_joined: today })
+users.set(OLDTIMER, { id: OLDTIMER, displayName: 'Plimb abcd', tags: [], iconUrl: OTHER_ICON, date_joined: '2021-01-01' })
+users.set(SELLER, { id: SELLER, displayName: 'Seller', pronouns: 'cheap at shady(.)shop', tags: ['system_trust_basic'], iconUrl: OTHER_ICON, date_joined: '2020-01-01' })
 
 const install = () => crypto.randomUUID()
 const post = (body: unknown, ip = '203.0.113.1') =>
-    app.request('/v1/reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip },
-        body: JSON.stringify(body)
-    })
-const report = async (userId: string, grounds: object, displayName = 'x', inst = install()) =>
-    (await (await post({ install: inst, userId, displayName, grounds })).json()) as { result?: string; error?: string }
-const list = async (since = 0) => (await (await app.request(`/v1/list?since=${since}`)).json()) as {
-    seq: number
-    more: boolean
-    added: { userId: string; grounds: Record<string, unknown> }[]
-    removed: string[]
+    app.request('/v1/reports', { method: 'POST', headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip }, body: JSON.stringify(body) })
+const report = async (userId: string, grounds: object, caughtBy?: unknown) => {
+    const res = await post({ install: install(), userId, displayName: 'x', grounds, caughtBy })
+    return ((await res.json()) as { result?: string }).result ?? `HTTP ${res.status}`
 }
+const list = async (since = 0) =>
+    (await (await app.request(`/v1/list?since=${since}`)).json()) as { seq: number; added: { userId: string; grounds: Record<string, unknown> }[]; removed: string[] }
+const ids = async () => (await list()).added.map((e) => e.userId)
+const lookups = (id: string) => calls.filter((c) => c === `GET /api/1/users/${id}`).length
 const settle = () => Bun.sleep(150)
 
-test('reports that hold up go on the shared list, with the grounds that held', async () => {
-    expect((await report(BOT, { name: true, robot: true, visitor: true })).result).toBe('queued')
-    expect((await report(HEXER, { bio: 'hexed.cc' })).result).toBe('queued')
-    expect((await report(TROLL, { nuisance: true })).result).toBe('queued')
+test('a bot is looked up once and listed with every sign that held', async () => {
+    expect(await report(BOT, { name: true, robot: true, visitor: true, age: 0 }, { together: ['name', 'robot', 'visitor'] })).toBe('queued')
     await settle()
-    const l = await list()
-    const by = Object.fromEntries(l.added.map((e) => [e.userId, e.grounds]))
-    expect(by[BOT]).toEqual({ name: true, robot: true, visitor: true })
-    expect(by[HEXER]).toEqual({ bio: 'hexed.cc' })
-    expect(by[TROLL]).toEqual({ nuisance: true })
+    const entry = (await list()).added.find((e) => e.userId === BOT)
+    expect(entry?.grounds).toEqual({ name: true, robot: true, visitor: true, age: 0 })
     expect(calls).toContain('POST /api/1/auth/twofactorauth/totp/verify')
 })
 
-test('claims that do not hold up are rejected', async () => {
-    expect((await report(LIAR, { name: true, robot: true, visitor: true })).result).toBe('queued')
-    expect((await report(LIAR, { bio: 'hexed.cc' })).result).toBe('queued')
-    expect((await report(GONE, { nuisance: true })).result).toBe('queued')
-    // A real newcomer with a default name, falsely reported as wearing the Robot.
-    expect((await report(NEWCOMER, { name: true, robot: true, visitor: true })).result).toBe('queued')
+test('repeat reports reuse the stored check: no second lookup', async () => {
+    const before = lookups(BOT)
+    expect(await report(BOT, { name: true, robot: true })).toBe('known')
+    expect(await report(BOT, { name: true, robot: true })).toBe('known')
     await settle()
-    const ids = (await list()).added.map((e) => e.userId)
-    expect(ids).not.toContain(LIAR)
-    expect(ids).not.toContain(GONE)
-    expect(ids).not.toContain(NEWCOMER)
+    expect(lookups(BOT)).toBe(before)
 })
 
-test('below the minimum is refused without a lookup, a second report of a listed player is known', async () => {
-    expect((await report(LIAR, { name: true, visitor: true })).result).toBe('below minimum')
-    expect((await report(BOT, { name: true, robot: true, visitor: true })).result).toBe('known')
+test('one sign is not enough, whatever the reporter claims', async () => {
+    expect(await report(OLDTIMER, { name: true, robot: true })).toBe('queued') // claims the Robot
+    expect(await report(GONE, { name: true, robot: true })).toBe('queued')
+    await settle()
+    expect(await ids()).not.toContain(OLDTIMER)
+    expect(await ids()).not.toContain(GONE)
 })
 
-test('sync hands over only what changed, removals included', async () => {
-    const first = await list()
-    expect((await list(first.seq)).added).toEqual([])
-    unlist(TROLL)
-    const next = await list(first.seq)
-    expect(next.removed).toEqual([TROLL])
-    expect(next.seq).toBeGreaterThan(first.seq)
+test('a new word waits for approval; approving it lists the player without a new lookup', async () => {
+    expect(await report(SELLER, { bio: 'shady.shop' })).toBe('queued')
+    await settle()
+    expect(await ids()).not.toContain(SELLER)
+    const before = lookups(SELLER)
+    setWord('shady.shop', 'approved')
+    const { reevaluate } = await import('../src/reports')
+    expect(reevaluate().added).toBe(1)
+    expect(await ids()).toContain(SELLER)
+    expect(lookups(SELLER)).toBe(before)
+})
+
+test('a hand removal sticks: new reports do not put the player back', async () => {
+    removeByHand(BOT)
+    expect(await report(BOT, { name: true, robot: true })).toBe('known')
+    await settle()
+    expect(await ids()).not.toContain(BOT)
+    expect((await list(0)).removed).toContain(BOT)
+})
+
+test("an older plugin's extra grounds are dropped, not refused", async () => {
+    expect(await report(OLDTIMER, { name: true, robot: true, nuisance: true, probable: true })).not.toMatch(/HTTP/)
+})
+
+test('below the rules is refused without a lookup', async () => {
+    expect(await report('usr_99999999-9999-9999-9999-999999999999', { name: true, visitor: true })).toBe('below minimum')
+    expect(lookups('usr_99999999-9999-9999-9999-999999999999')).toBe(0)
 })
 
 test('malformed reports and floods are turned away', async () => {
     expect((await post({ install: 'nope', userId: BOT, displayName: 'x', grounds: {} })).status).toBe(400)
-    expect((await post({ install: install(), userId: BOT, displayName: 'x', grounds: { evil: true } })).status).toBe(400)
     const one = install()
     const statuses = []
     for (let i = 0; i < 7; i++) {
-        statuses.push((await post({ install: one, userId: BOT, displayName: 'x', grounds: { nuisance: true } }, '198.51.100.9')).status)
+        statuses.push((await post({ install: one, userId: BOT, displayName: 'x', grounds: { name: true, robot: true } }, '198.51.100.9')).status)
     }
     expect(statuses.slice(0, 5).every((s) => s === 200)).toBe(true)
     expect(statuses.at(-1)).toBe(429)
 })
 
-test('cross-origin calls from VRCX are allowed', async () => {
-    const res = await app.request('/v1/list', { headers: { Origin: 'file://vrcx' } })
-    expect(res.headers.get('access-control-allow-origin')).toBe('*')
+test('the stream tells a plugin about changes as they happen', async () => {
+    const res = await app.request('/v1/stream')
+    expect(res.headers.get('content-type')).toContain('text/event-stream')
+    const reader = res.body!.getReader()
+    const first = new TextDecoder().decode((await reader.read()).value)
+    expect(first).toContain('event: change')
+    setWord('shady.shop', 'removed')
+    const { reevaluate } = await import('../src/reports')
+    reevaluate()
+    const next = new TextDecoder().decode((await reader.read()).value)
+    expect(next).toContain('event: change')
+    await reader.cancel()
 })
 
-test('health shows the VRChat login and the counts', async () => {
-    const h = (await (await app.request('/healthz')).json()) as { vrchat: string; listed: number }
+test('rules and health for plugins and monitoring; cross-origin allowed', async () => {
+    const rules = (await (await app.request('/v1/rules')).json()) as { counted: Record<string, boolean>; needed: number }
+    expect(rules.needed).toBe(2)
+    expect(rules.counted).toEqual({ name: true, robot: true, visitor: false, age: true })
+    const res = await app.request('/v1/list', { headers: { Origin: 'file://vrcx' } })
+    expect(res.headers.get('access-control-allow-origin')).toBe('*')
+    const h = (await (await app.request('/healthz')).json()) as { vrchat: string; lookups: { usedToday: number } }
     expect(h.vrchat).toBe('ok')
-    expect(h.listed).toBe(2)
+    expect(h.lookups.usedToday).toBeGreaterThan(0)
 })

@@ -2,15 +2,22 @@
 import { admin, isPrivate } from './admin'
 import { app } from './app'
 import { ADMIN_PORT, PORT, VERSION } from './config'
-import { wake } from './reports'
+import { startBackground } from './reports'
 
-wake() // reports left pending by the last run
+startBackground() // reports left pending by the last run, then the checker and the slow re-check
 Bun.serve({ port: PORT, hostname: '0.0.0.0', fetch: app.fetch })
+const seen = new Set<string>()
 // The management page: its own port, private addresses only (the port is never forwarded either).
 Bun.serve({
     port: ADMIN_PORT,
     hostname: '0.0.0.0',
-    fetch: (req, server) =>
-        isPrivate(server.requestIP(req)?.address) ? admin.fetch(req) : new Response('Forbidden', { status: 403 })
+    fetch: (req, server) => {
+        const address = server.requestIP(req)?.address
+        if (!seen.has(address ?? '')) {
+            seen.add(address ?? '')
+            console.log(`management page: first request from ${address}`) // shows whether Docker passes real addresses
+        }
+        return isPrivate(address) ? admin.fetch(req) : new Response('Forbidden', { status: 403 })
+    }
 })
 console.log(`VRCX Bot Blocker API ${VERSION} on :${PORT}, management on :${ADMIN_PORT}`)

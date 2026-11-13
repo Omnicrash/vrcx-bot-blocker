@@ -1,6 +1,11 @@
 import { expect, test } from 'bun:test'
-import { bioMention, DEFAULT_RULES, hasDefaultName, meetsRules, ROBOT_ICON, verifiedGrounds } from '../src/rules'
+import { DEFAULT_RULES, type Facts, factsOf, hasDefaultName, judge, mention, ROBOT_ICON, worthReporting } from '../src/rules'
 import { totp } from '../src/vrchat'
+
+const DAY = 86_400_000
+const NOW = Date.parse('2026-11-13T12:00:00Z')
+const facts = (f: Partial<Facts>): Facts => ({ displayName: 'x', name: false, robot: false, visitor: false, joinedAt: NOW - 400 * DAY, text: '', ...f })
+const listed = (f: Partial<Facts>, words = ['hexed.cc']) => judge(facts(f), NOW, DEFAULT_RULES, words).listed
 
 test('default display name ends in the last 4 hex digits of the user id', () => {
     expect(hasDefaultName('Ulvor6ex f478', 'usr_c768200e-f3db-4b7f-90e0-51323b70f478')).toBe(true)
@@ -8,46 +13,54 @@ test('default display name ends in the last 4 hex digits of the user id', () => 
     expect(hasDefaultName('Some Name f478', 'usr_c768200e-f3db-4b7f-90e0-51323b70f478')).toBe(false)
 })
 
-test('bio words: websites match their disguised spellings, keywords match as written', () => {
+test('words: websites match their disguised spellings, keywords match as written', () => {
     const words = ['hexed.cc', 'free robux']
-    for (const t of ['hexed.cc', 'HEXED . CC', 'hexed(.)cc', 'hexed[.]cc', 'hexed (dot) cc', 'hexed dot cc']) {
-        expect(bioMention({ bio: t }, words)).toBe('hexed.cc')
+    for (const t of ['hexed.cc', 'HEXED . CC', 'hexed(.)cc', 'hexed[.]cc', 'hexed (dot) cc', 'hexed [dot] cc', 'hexed dot cc']) {
+        expect(mention(t, words)).toBe('hexed.cc')
     }
     for (const t of ['hexedcc', 'hexed.com', 'i got hexed, cc me', 'freerobux']) {
-        expect(bioMention({ bio: t }, words)).toBeNull()
+        expect(mention(t, words)).toBeNull()
     }
-    expect(bioMention({ bioLinks: ['https://hexed.cc/x'] }, words)).toBe('hexed.cc')
-    expect(bioMention({ pronouns: 'hexed.cc BUY' }, words)).toBe('hexed.cc')
-    expect(bioMention({ statusDescription: 'hexed dot cc' }, words)).toBe('hexed.cc')
 })
 
-test('the default acceptance rules: the three bot signs together, a bio word, or Nuisance', () => {
-    const meets = (g: object) => meetsRules(g, DEFAULT_RULES)
-    expect(meets({ name: true, robot: true, visitor: true })).toBe(true)
-    expect(meets({ name: true, visitor: true })).toBe(false)
-    expect(meets({ bio: 'hexed.cc' })).toBe(true)
-    expect(meets({ nuisance: true })).toBe(true)
-    expect(meets({ probable: true, age: 1 })).toBe(false)
+test('the profile text covers bio, links, pronouns and status; the Robot comes from the icon', () => {
+    const f = factsOf({
+        id: 'usr_00000000-0000-0000-0000-00000000f478',
+        displayName: 'Ulvor6ex f478',
+        pronouns: 'hexed.cc BUY',
+        statusDescription: 'hi',
+        bioLinks: ['https://x.y'],
+        iconUrl: `https://api.vrchat.cloud/api/1/image/${ROBOT_ICON}/1/256`,
+        tags: [],
+        date_joined: '2026-11-12'
+    })
+    expect(f).toMatchObject({ name: true, robot: true, visitor: true })
+    expect(mention(f.text, ['hexed.cc'])).toBe('hexed.cc')
 })
 
-test('changed acceptance rules: Almost Nuisance alone, and new accounts together with a default name', () => {
-    const r = structuredClone(DEFAULT_RULES)
-    r.rules.probable = { on: true, always: true }
-    r.rules.robot.on = false
-    r.rules.visitor.on = false
-    r.rules.age = { on: true, always: false }
-    r.ageDays = 3
-    expect(meetsRules({ probable: true }, r)).toBe(true)
-    expect(meetsRules({ name: true, age: 1 }, r)).toBe(true)
-    expect(meetsRules({ name: true, age: 5 }, r)).toBe(false)
+test('2 of default name, Robot and new account; Visitor rank does not count by default', () => {
+    const fresh = NOW - 1 * DAY
+    expect(listed({ robot: true, joinedAt: fresh })).toBe(true) // Robot + new
+    expect(listed({ name: true, joinedAt: fresh })).toBe(true) // name + new
+    expect(listed({ name: true, robot: true })).toBe(true) // name + Robot
+    expect(listed({ name: true })).toBe(false)
+    expect(listed({ name: true, visitor: true })).toBe(false)
+    expect(listed({ joinedAt: fresh, visitor: true })).toBe(false)
+    expect(listed({ text: 'buy at hexed dot cc' })).toBe(true) // an approved word alone
+    expect(listed({ text: 'buy at hexed dot cc' }, [])).toBe(false) // not approved: nothing
 })
 
-test('only grounds that still hold survive the re-check', () => {
-    const all = { name: true, robot: true, visitor: true, bio: 'hexed.cc', nuisance: true }
-    const person = { id: 'usr_00000000-0000-0000-0000-00000000f478', displayName: 'Renamed Person', tags: ['system_trust_basic'], bio: 'hi', iconUrl: 'https://api.vrchat.cloud/api/1/image/file_a8a717f8-47bf-4caa-b818-ebc902741dea/1/256' }
-    expect(verifiedGrounds(all, person, ['hexed.cc'])).toEqual({})
-    const bot = { id: 'usr_00000000-0000-0000-0000-00000000f478', displayName: 'Ulvor6ex f478', tags: [], pronouns: 'hexed.cc BUY', iconUrl: `https://api.vrchat.cloud/api/1/image/${ROBOT_ICON}/1/256` }
-    expect(verifiedGrounds(all, bot, ['hexed.cc'])).toEqual({ name: true, robot: true, visitor: true, bio: 'hexed.cc' })
+test('account age is taken from when the server first saw the player, not today', () => {
+    const f = facts({ name: true, joinedAt: NOW - 2 * DAY })
+    expect(judge(f, NOW, DEFAULT_RULES, []).listed).toBe(true)
+    expect(judge(f, NOW, DEFAULT_RULES, []).grounds.age).toBe(2)
+})
+
+test('a report is worth a lookup on the same rules, or any word at all', () => {
+    expect(worthReporting({ name: true, robot: true }, DEFAULT_RULES)).toBe(true)
+    expect(worthReporting({ name: true, age: 3 }, DEFAULT_RULES)).toBe(true)
+    expect(worthReporting({ name: true, visitor: true }, DEFAULT_RULES)).toBe(false)
+    expect(worthReporting({ bio: 'some new site.com' }, DEFAULT_RULES)).toBe(true)
 })
 
 test('authenticator codes follow RFC 6238', () => {

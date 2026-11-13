@@ -18,8 +18,10 @@ many accounts are listed and how many reports wait for a check.
 
 `http://192.168.1.10:3061` from the home network: group reports waiting for review, the acceptance
 rules (what the server needs before it lists a player), and the shared list with a Remove button.
-Its port is published by the container but never forwarded or proxied, and the page also refuses
-any address that isn't private. No login.
+Its port is published by the container but never forwarded or proxied; the page also refuses
+any address that isn't private, refuses forms posted from other sites, and wants a password. The
+password's hash is `admin.hash` in the data folder (`bun -e 'console.log(await Bun.password.hash("…"))'`),
+read when the container starts; with no hash nobody gets in.
 
 ## One-time setup
 

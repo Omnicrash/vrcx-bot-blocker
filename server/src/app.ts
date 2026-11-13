@@ -1,32 +1,33 @@
 // The plugin-facing API. Plugins run inside VRCX's page, so any origin may call it.
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { streamSSE } from 'hono/streaming'
 import { z } from 'zod'
 import { LIMIT_PER_INSTALL, LIMIT_PER_IP, LIST_PAGE, VERSION } from './config'
-import { changesSince, counts, receive, serverRules } from './reports'
-import { loginState } from './vrchat'
+import { changesSince, counts, currentSeq, onChange, receive, serverRules, streams } from './reports'
+import { budget, loginState } from './vrchat'
 
 export const app = new Hono()
 app.use('/v1/*', cors())
 
 const USER_ID = /^usr_[0-9a-f-]{36}$/
+// Unknown grounds (an older plugin's `nuisance`) are dropped, not refused: a refusal makes the
+// plugin throw the report away.
 const report = z.object({
     install: z.string().regex(/^[0-9a-f-]{36}$/),
     userId: z.string().regex(USER_ID),
     displayName: z.string().max(64),
-    grounds: z
-        .object({
-            name: z.boolean().optional(),
-            robot: z.boolean().optional(),
-            visitor: z.boolean().optional(),
-            bio: z.string().max(100).optional(),
-            nuisance: z.boolean().optional(),
-            probable: z.boolean().optional(),
-            age: z.number().int().min(0).max(100000).optional(),
-            group: z.string().max(100).optional(),
-            groupId: z.string().regex(/^grp_[0-9a-f-]{36}$/).optional()
-        })
-        .strict()
+    grounds: z.object({
+        name: z.boolean().optional(),
+        robot: z.boolean().optional(),
+        visitor: z.boolean().optional(),
+        bio: z.string().max(100).optional(),
+        age: z.number().int().min(0).max(100000).optional(),
+        group: z.string().max(100).optional(),
+        groupId: z.string().regex(/^grp_[0-9a-f-]{36}$/).optional()
+    }),
+    // Which of the reporter's own rules caught the player: research data, never a decision.
+    caughtBy: z.unknown().optional()
 })
 
 // Reports per hour, counted in memory: a restart forgets, which is fine for a limit.
@@ -61,7 +62,8 @@ app.post('/v1/reports', async (c) => {
     if (overLimit(`i:${r.install}`, LIMIT_PER_INSTALL) || overLimit(`a:${ip}`, LIMIT_PER_IP)) {
         return c.json({ error: 'too many reports' }, 429)
     }
-    return c.json({ result: receive({ ...r, ip }) })
+    const caughtBy = JSON.stringify(r.caughtBy ?? null).length <= 2000 ? r.caughtBy : null
+    return c.json({ result: receive({ ...r, caughtBy, ip }) })
 })
 
 app.get('/v1/list', (c) => {
@@ -70,9 +72,28 @@ app.get('/v1/list', (c) => {
 })
 
 // What the server accepts, so plugins only report what can be listed.
-app.get('/v1/rules', (c) => {
-    const { rules, ageDays } = serverRules()
-    return c.json({ rules, ageDays })
+app.get('/v1/rules', (c) => c.json(serverRules()))
+
+// Pushes a 'change' event with the list's latest number the moment it changes, so plugins
+// don't have to poll. A comment every 30 s keeps Cloudflare and NPMplus from closing it.
+app.get('/v1/stream', (c) => {
+    c.header('X-Accel-Buffering', 'no')
+    c.header('Cache-Control', 'no-cache')
+    return streamSSE(c, async (stream) => {
+        let alive = true
+        const off = onChange((seq) => void stream.writeSSE({ event: 'change', data: String(seq) }))
+        stream.onAbort(() => {
+            alive = false
+            off()
+        })
+        await stream.writeSSE({ event: 'change', data: String(currentSeq()) })
+        while (alive) {
+            await stream.sleep(30_000)
+            if (alive) {
+                await stream.write(': keep-alive\n\n')
+            }
+        }
+    })
 })
 
-app.get('/healthz', (c) => c.json({ version: VERSION, vrchat: loginState, ...counts() }))
+app.get('/healthz', (c) => c.json({ version: VERSION, vrchat: loginState, ...counts(), streams: streams(), lookups: budget() }))

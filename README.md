@@ -93,27 +93,36 @@ notices when you unblock anyone in VRCX yourself, and leaves that person alone f
 
 ## Shared blocklist
 
-Every player your block rules catch is reported to a shared list at `vapi.omnicrash.net`,
-together with what they were caught on. Players blocked for being in one of your groups are only
-reported when you tick **Also report group blocks**, and blocks you make yourself never are. The server looks each one up on VRChat itself and lists them only
-when the grounds still hold: the default display name, the Robot avatar (seen through the
-profile picture), Visitor rank, a site in the bio or pronouns, or Nuisance rank. Reports have to
-meet at least the default rules. Every plugin then blocks the listed accounts too, a few per
-minute so VRChat isn't flooded, and only those your own rules would block. So most bots are
-already blocked before they ever reach your instance.
+Players you block are reported to a shared list at `vapi.omnicrash.net`. The server doesn't take
+the report's word for anything: it looks each player up on VRChat itself, once, and lists them
+when its own rules say so:
 
-It's on by default. Uncheck it in the installer, or switch off **Shared blocklist** on the Bot
-Blocker page. Off means nothing is sent and nothing is fetched.
+- **at least 2 of** a default display name, the Robot avatar (seen through the profile picture),
+  and an account under a week old when the server first saw it, **or**
+- a word or site on the server's approved list (hexed.cc to start) in the bio, its links, the
+  pronouns or the status.
 
-What leaves your computer: the blocked player's ID and display name, what they were caught on,
-and a random ID this install made up for itself, so the server can tell reports apart. Nothing
-about you or your VRChat account. The server keeps the install ID and your address only as
-scrambled hashes, for rate limits.
+New words that plugins report wait for a person to approve them. Nuisance rank is never shared.
+Players blocked for being in one of your groups are only sent when you tick **Also sync group
+blocks**, and a person reviews those by hand before anyone else blocks them.
+
+Every plugin then blocks the listed accounts too: a few a minute, each looked up first, never a
+friend, and only the ones your own rules would block. Changes reach every running plugin within
+seconds. If a player is taken off the list, the blocks that came from the list are undone again;
+your own blocks stay.
+
+It's on by default. Uncheck it in the installer, or switch off **Use the shared blocklist** on the
+Bot Blocker page. Off means nothing is sent and nothing is fetched.
+
+What leaves your computer: the blocked player's ID and display name, what the plugin saw (default
+name, Robot avatar, Visitor rank, account age, a word from the bio), which of your rules caught
+them, and a random ID this install made up for itself. Nothing about you or your VRChat account.
+The server keeps the install ID and your address only as scrambled hashes, for rate limits. It
+keeps the reports, and what it saw of each reported player, including their profile text, for
+good, so it can apply changed rules to the whole list again.
 
 When the server can't be reached, nothing changes for you: blocking works as before, reports
 wait, and syncing picks up again by itself.
-
-Group lists stay on your own computer.
 
 ## Options
 

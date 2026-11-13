@@ -4,7 +4,7 @@
 import { createHmac } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { COOKIE_FILE, USER_AGENT, VRC_API, VRC_GAP_MS, VRC_PASSWORD, VRC_TOTP_SECRET, VRC_USERNAME } from './config'
+import { COOKIE_FILE, LOOKUPS_PER_DAY, USER_AGENT, VRC_API, VRC_GAP_MS, VRC_PASSWORD, VRC_TOTP_SECRET, VRC_USERNAME } from './config'
 import type { Profile } from './rules'
 
 export type LookupResult = { ok: true; user: Profile } | { ok: false; reason: 'missing' | 'unavailable' }
@@ -108,8 +108,31 @@ async function login(): Promise<boolean> {
     return !!body.id
 }
 
+// The account's protection: a daily cap on lookups, a pause after VRChat says "too many
+// requests", and a longer one after a failed login, so a wrong password isn't retried in a loop.
+let day = ''
+let usedToday = 0
+let pausedUntil = 0
+const pause = (ms: number) => {
+    pausedUntil = Math.max(pausedUntil, Date.now() + ms)
+}
+export const budget = () => ({ usedToday, perDay: LOOKUPS_PER_DAY, pausedUntil: pausedUntil > Date.now() ? pausedUntil : null })
+
+function mayLookUp(): boolean {
+    const today = new Date().toISOString().slice(0, 10)
+    if (today !== day) {
+        day = today
+        usedToday = 0
+    }
+    return Date.now() >= pausedUntil && usedToday < LOOKUPS_PER_DAY
+}
+
 // Looks a player up, logging in (once) when the session has run out.
 export function getUser(userId: string): Promise<LookupResult> {
+    if (!mayLookUp()) {
+        return Promise.resolve({ ok: false, reason: 'unavailable' })
+    }
+    usedToday++
     return paced(async () => {
         for (let attempt = 0; attempt < 2; attempt++) {
             const res = await call(`/users/${encodeURIComponent(userId)}`)
@@ -120,11 +143,16 @@ export function getUser(userId: string): Promise<LookupResult> {
             if (res.status === 404) {
                 return { ok: false, reason: 'missing' }
             }
+            if (res.status === 429) {
+                pause(15 * 60_000)
+                break
+            }
             if (res.status === 401 && attempt === 0 && (await login())) {
                 continue
             }
             if (res.status === 401) {
                 loginState = 'failed'
+                pause(60 * 60_000)
             }
             break
         }
