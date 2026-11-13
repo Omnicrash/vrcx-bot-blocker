@@ -971,9 +971,14 @@
                 max-height: 92px; overflow-y: auto; }
             .bb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
             .bb-cols > section { min-width: 0; }
-            @media (max-width: 760px) { .bb-cols { grid-template-columns: 1fr; } }
             .bb-scroll { max-height: 300px; overflow-y: auto; }
-            .bb-recent { max-height: 560px; }
+            /* Recently blocked fills the right column down to the bottom of the rules. */
+            .bb-cols > section:last-child { display: flex; flex-direction: column; }
+            .bb-recent { flex: 1 1 0; contain: size; max-height: none; min-height: 200px; }
+            @media (max-width: 760px) {
+                .bb-cols { grid-template-columns: 1fr; }
+                .bb-recent { flex: none; contain: none; max-height: 560px; }
+            }
             .bb-recent .bb-row { flex-wrap: wrap; row-gap: 0; }
             .bb-recent .bb-row .bb-muted:last-child { flex-basis: 100%; white-space: normal; }
             .bb-chip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 4px 1px 8px; font-size: 12px;

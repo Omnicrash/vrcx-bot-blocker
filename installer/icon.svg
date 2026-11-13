@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <!-- Shield -->
   <path d="M128 10 L226 46 V118 C226 182 184 226 128 246 C72 226 30 182 30 118 V46 Z"
-        fill="#2b5fd9" stroke="#163a8f" stroke-width="10" stroke-linejoin="round"/>
+        fill="#7b4fe0" stroke="#4a2a9e" stroke-width="10" stroke-linejoin="round"/>
   <!-- Robot head -->
   <line x1="128" y1="62" x2="128" y2="84" stroke="#ffffff" stroke-width="10" stroke-linecap="round"/>
   <circle cx="128" cy="58" r="10" fill="#ffffff"/>
   <rect x="74" y="84" width="108" height="86" rx="20" fill="#ffffff"/>
-  <circle cx="104" cy="122" r="13" fill="#2b5fd9"/>
-  <circle cx="152" cy="122" r="13" fill="#2b5fd9"/>
-  <rect x="100" y="148" width="56" height="9" rx="4.5" fill="#2b5fd9"/>
+  <circle cx="104" cy="122" r="13" fill="#7b4fe0"/>
+  <circle cx="152" cy="122" r="13" fill="#7b4fe0"/>
+  <rect x="100" y="148" width="56" height="9" rx="4.5" fill="#7b4fe0"/>
   <!-- Blocked: red ring and slash -->
   <circle cx="128" cy="128" r="84" fill="none" stroke="#e5383b" stroke-width="16"/>
   <line x1="69" y1="187" x2="187" y2="69" stroke="#e5383b" stroke-width="16" stroke-linecap="round"/>
