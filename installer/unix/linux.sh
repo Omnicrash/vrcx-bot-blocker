@@ -85,9 +85,9 @@ fi
 # Only offered when a previous version is in place: a fresh install has the defaults anyway.
 reset=0
 if [ -f "$target" ] && grep -q "^$BB_START_PREFIX" "$target" && [ -t 0 ]; then
-    printf 'Change to recommended settings (highly recommended for this update)? [Y/n] '
+    printf 'Reset options to recommended defaults? [y/N] '
     read -r answer || answer=''
-    case "$answer" in n* | N*) ;; *) reset=1 ;; esac
+    case "$answer" in y* | Y*) reset=1 ;; esac
 fi
 
 bb_install "$target" "$plugin" "$share" "$reset"

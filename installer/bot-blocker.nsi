@@ -63,7 +63,7 @@ Function SharePage
     ${EndIf}
     ; Only when updating: a fresh install already has the recommended settings.
     ${If} $HadBefore == 1
-        ${NSD_CreateCheckbox} 0 74u 100% 12u "Change to recommended settings (highly recommended for this update)"
+        ${NSD_CreateCheckbox} 0 74u 100% 12u "Reset options to recommended defaults"
         Pop $ResetBox
         ${If} $Reset == 1
             ${NSD_Check} $ResetBox
@@ -86,7 +86,6 @@ Function .onInit
     ReadRegStr $0 HKCU "${UNINST_KEY}" "DisplayVersion"
     ${If} $0 != ""
         StrCpy $HadBefore 1
-        StrCpy $Reset 1
     ${EndIf}
     ${GetParameters} $0
     ClearErrors

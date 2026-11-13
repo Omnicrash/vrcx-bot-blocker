@@ -46,7 +46,7 @@ bb_install() {
         printf '%s\n' "$BB_START"
         LC_ALL=C awk -v share="$share" -v reset="$reset" -v stamp="$stamp" '
             /@SHARE_DEFAULT@/ { $0 = "    const SHARE_DEFAULT = " share "; // @SHARE_DEFAULT@" }
-            /@RESET_RULES@/ { $0 = "    const RESET_RULES = " reset "; // @RESET_RULES@ - the installer'\''s \"Change to recommended settings\"" }
+            /@RESET_RULES@/ { $0 = "    const RESET_RULES = " reset "; // @RESET_RULES@ - the installer'\''s \"Reset options to recommended defaults\"" }
             /@INSTALL_STAMP@/ { $0 = "    const INSTALL_STAMP = '\''" stamp "'\''; // @INSTALL_STAMP@" }
             { lines[++n] = $0 }
             END { while (n > 0 && lines[n] ~ /^[ \t\r]*$/) n--; for (i = 1; i <= n; i++) print lines[i] }' "$plugin"

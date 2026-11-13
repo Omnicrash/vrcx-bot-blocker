@@ -11,8 +11,8 @@
         <line choice="reset"/>
         <line choice="main"/>
     </choices-outline>
-    <choice id="reset" title="Change to recommended settings (highly recommended for this update)" start_selected="true"
-            description="Puts the blocking rules back to the recommended defaults. Your group list and block history stay. On a first install this changes nothing.">
+    <choice id="reset" title="Reset options to recommended defaults" start_selected="false"
+            description="Puts the blocking rules back to the recommended defaults. Your group list and block history stay.">
         <pkg-ref id="net.omnicrash.vrcx-bot-blocker.reset"/>
     </choice>
     <choice id="share" title="Use and contribute to the shared blocklist" start_selected="true"

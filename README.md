@@ -52,9 +52,9 @@ Players it already blocked stay blocked.
 
 ## Blocking groups
 
-Open **Bot Blocker** in VRCX's side menu, below Moderation. Paste a group link, its `grp_` ID or
-its code (like `ABCD.1234`) and click **Add**. Or open the group in VRCX and click
-**Auto-block members** at the top of its window.
+Open **Bot Blocker** in VRCX's side menu, the robot just above the settings gear. Paste a group
+link, its `grp_` ID or its code (like `ABCD.1234`) and click **Add**. Or open the group in VRCX
+and click **Auto-block members** at the top of its window.
 
 From then on, anyone who isn't your friend and shows that group on their profile is blocked
 when they join. Players already in your instance are checked as soon as you add the group.
@@ -86,9 +86,9 @@ How they combine:
 - **Exclude friends** (on by default) keeps friends out of all of it.
 - Members of a group on your list are always blocked (see above).
 
-Changing a rule also checks everyone already in your instance. When you update, the installer
-offers **Change to recommended settings**: ticked, your rules go back to these defaults once;
-unticked, they stay as you set them. Your group list and block history stay either way.
+Changing a rule also checks everyone already in your instance. When you update, you can tick
+**Reset options to recommended defaults** in the installer to put your rules back to these
+defaults. Your group list and block history stay.
 
 **Nobody is blocked twice.** The plugin remembers everyone it has blocked and never checks them
 again. So if you unblock someone it caught, in VRChat or in VRCX, they stay unblocked. It also

@@ -16,7 +16,7 @@
 // Nobody is ever blocked twice: anyone this script blocked before, and anyone you unblock in
 // VRCX yourself, is left alone from then on.
 (function () {
-    const VERSION = '2.0.0'; // build.sh checks it against the VERSION file
+    const VERSION = '2.0.1'; // build.sh checks it against the VERSION file
     const UPDATE_KEY = 'botBlocker.update'; // a newer release, downloaded and its signature checked
 
     // A newer release the updater downloaded runs in place of this copy. If it fails to start,
@@ -63,7 +63,7 @@
     // The installer's "shared blocklist" checkbox and when it ran; both lines are rewritten by it.
     const SHARE_DEFAULT = true; // @SHARE_DEFAULT@
     const INSTALL_STAMP = 'dev'; // @INSTALL_STAMP@
-    const RESET_RULES = false; // @RESET_RULES@ - the installer's "Change to recommended settings"
+    const RESET_RULES = false; // @RESET_RULES@ - the installer's "Reset options to recommended defaults"
     const SYNC_EVERY_MS = 30 * 60_000; // the fallback; changes arrive through the stream at once
     const SHARED_BLOCK_GAP_MS = 15_000; // listed accounts are blocked one at a time, this far apart
 
@@ -170,6 +170,29 @@
         for (const [userId, name] of present) {
             evaluate(name, userId, { rule: 'all' });
         }
+    }
+
+    // Settings that would block a lot of real people, as warnings for the page. Default name, the
+    // Robot avatar, Visitor rank and a new account each fit plenty of real people on their own, and
+    // Visitor rank and a new account fit almost every new player together, so those two count as one.
+    const WEAK_RULES = ['name', 'robot', 'visitor', 'age'];
+    const WEAK_TITLES = { name: 'Default display name', robot: 'Robot avatar', visitor: 'Visitor rank', age: 'Account younger than' };
+    function riskWarnings(s) {
+        const warnings = [];
+        const on = (r) => s.rules[r].on;
+        for (const r of WEAK_RULES.filter((r) => on(r) && s.rules[r].always)) {
+            warnings.push(`Always block on ${WEAK_TITLES[r]} blocks a lot of real people.`);
+        }
+        const together = WEAK_RULES.filter((r) => on(r) && !s.rules[r].always);
+        if (together.length && s.needed <= 1) {
+            warnings.push('With 1 needed, one rule is enough to block someone. That blocks a lot of real people.');
+        } else if (together.includes('visitor') && together.includes('age') && s.needed <= 2) {
+            warnings.push('Visitor rank and a new account fit almost every new player. With 2 needed, that blocks a lot of real people.');
+        }
+        if (!s.excludeFriends) {
+            warnings.push('Your friends can be blocked too.');
+        }
+        return warnings;
     }
 
     function setRule(rule, field, value) {
@@ -792,7 +815,7 @@
     }
 
     // Each installer run applies its choices once: the sharing checkbox, and, only when its
-    // "Change to recommended settings" box was ticked, the default rules. After that the page
+    // "Reset options to recommended defaults" box was ticked, the default rules. After that the page
     // decides. The group list, the block history and the never-block-again list always stay.
     function applyInstallChoice() {
         if (INSTALL_STAMP === 'dev' || localStorage.getItem('botBlocker.installStamp') === INSTALL_STAMP) {
@@ -993,6 +1016,8 @@
             .bb-btn:disabled { opacity: .5; cursor: default; }
             .bb-btn.bb-ghost { background: transparent; color: var(--muted-foreground); padding: 4px 8px; }
             .bb-btn.bb-ghost:hover { color: var(--destructive); }
+            .bb-risks { color: var(--warning, #e5a03b); font-size: 13px; }
+            .bb-risks > div { padding: 2px 0; }
             .bb-error { color: var(--destructive); font-size: 13px; margin-top: 6px; min-height: 1em; }
             .bb-empty { color: var(--muted-foreground); padding: 8px 0; }
             .bb-groupbar { display: flex; align-items: center; gap: 10px; margin: 0 0 10px;
@@ -1076,6 +1101,8 @@
                     <span>Exclude friends</span></label></div>
                 ${ruleRow('name', 'Default display name')}
                 ${ruleRow('robot', 'Robot avatar')}
+                ${ruleRow('age', `Account younger than
+                    <input class="bb-input bb-days" type="number" min="1" max="3650" value="${s.ageDays}" /> days`)}
                 ${ruleRow('visitor', 'Visitor rank')}
                 ${ruleRow('bio', 'Bio mentions')}
                 <div class="bb-words">
@@ -1087,11 +1114,10 @@
                 </div>
                 ${ruleRow('nuisance', 'Nuisance')}
                 ${ruleRow('probable', 'Almost Nuisance')}
-                ${ruleRow('age', `Account younger than
-                    <input class="bb-input bb-days" type="number" min="1" max="3650" value="${s.ageDays}" /> days`)}
                 <div class="bb-rule">At least
                     <input class="bb-input bb-days" data-act="needed" type="number" min="1" max="7" value="${s.needed}" />
                     of the checked rules without Always</div>
+                <div class="bb-risks">${riskWarnings(s).map((w) => `<div>${esc(w)}</div>`).join('')}</div>
                 <h3>Blocked groups</h3>
                 <form class="bb-add">
                     <input class="bb-input" placeholder="Group link, ID or code" />
@@ -1153,10 +1179,21 @@
                 renderPanel();
             };
         });
+        const showRisks = () => {
+            panel.querySelector('.bb-risks').innerHTML = riskWarnings(settings())
+                .map((w) => `<div>${esc(w)}</div>`)
+                .join('');
+        };
         panel.querySelectorAll('[data-always]').forEach((box) => {
-            box.onchange = () => setRule(box.dataset.always, 'always', box.checked);
+            box.onchange = () => {
+                setRule(box.dataset.always, 'always', box.checked);
+                showRisks();
+            };
         });
-        panel.querySelector('[data-act="friends"]').onchange = (e) => setExcludeFriends(e.target.checked);
+        panel.querySelector('[data-act="friends"]').onchange = (e) => {
+            setExcludeFriends(e.target.checked);
+            showRisks();
+        };
         panel.querySelector('[data-act="share"]').onchange = (e) => {
             setShare(e.target.checked);
             renderPanel();
@@ -1184,7 +1221,10 @@
         days.onclick = (e) => e.preventDefault(); // a click in the field shouldn't toggle the rule
         days.onchange = () => (days.value = setAgeDays(days.value));
         const needed = panel.querySelector('[data-act="needed"]');
-        needed.onchange = () => (needed.value = setNeeded(needed.value));
+        needed.onchange = () => {
+            needed.value = setNeeded(needed.value);
+            showRisks();
+        };
         panel.querySelectorAll('[data-act="remove"]').forEach((btn) => {
             btn.onclick = () => removeGroup(btn.dataset.id);
         });
@@ -1237,13 +1277,9 @@
         }
     }
 
+    const hasLabel = (el) => [...el.querySelectorAll('*')].some((c) => !c.children.length && c.textContent.trim());
+
     function ensureMenuEntry() {
-        const placed = document.querySelector('[data-bot-blocker-menu]');
-        if (placed) {
-            // VRCX adds and redraws entries as it goes; put ours back where it belongs.
-            placeMenuEntry(placed);
-            return;
-        }
         const menus = [...document.querySelectorAll('[data-sidebar="menu"]')];
         const items = (menu) => [...menu.querySelectorAll(':scope > [data-sidebar="menu-item"]')];
         const menu = menus.sort((a, b) => items(b).length - items(a).length)[0];
@@ -1251,8 +1287,19 @@
         const model =
             menu &&
             items(menu)
-                .filter((el) => el.querySelector('i[class*="ri-"]') && !el.querySelector('i.ri-settings-3-line'))
+                .filter((el) => el.querySelector('i[class*="ri-"]') && !el.querySelector('i.ri-settings-3-line') && !el.hasAttribute('data-bot-blocker-menu'))
                 .pop();
+        const placed = document.querySelector('[data-bot-blocker-menu]');
+        if (placed) {
+            // A copy made while the menu was collapsed has no name: make it again once it expands,
+            // and the other way round.
+            if (!model || hasLabel(model) === hasLabel(placed)) {
+                // VRCX adds and redraws entries as it goes; put ours back where it belongs.
+                placeMenuEntry(placed);
+                return;
+            }
+            placed.remove();
+        }
         if (!model) {
             logOnce('nomenu', `no menu entry to copy yet (${menus.length} menus)`);
             return;
@@ -1494,6 +1541,7 @@
         removeGroup,
         open: openPanel,
         checkForUpdate,
+        risks: () => riskWarnings(settings()),
         hasDefaultName
     };
 })();
