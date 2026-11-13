@@ -1,0 +1,40 @@
+#!/bin/sh
+# Runs as root after the .pkg's Install step. Everything that touches the user's files runs as
+# the logged-in user, so custom.js and our folder stay theirs.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+
+user=$(stat -f%Su /dev/console)
+case "$user" in
+    root | loginwindow | '') user=${USER:-} ;;
+esac
+[ -n "$user" ] && [ "$user" != root ] || { echo "No logged-in user to install for." >&2; exit 1; }
+home=$(dscl . -read "/Users/$user" NFSHomeDirectory | awk '{print $2}')
+uid=$(id -u "$user")
+as_user() { launchctl asuser "$uid" sudo -u "$user" "$@"; }
+
+vrcx="$home/Library/Application Support/VRCX"
+ours="$home/Library/Application Support/VRCX Bot Blocker"
+
+# VRCX loads custom.js from its folder on start; if it has never run, the folder comes first.
+as_user mkdir -p "$vrcx" "$ours"
+for f in common.sh bot-blocker.js "Uninstall VRCX Bot Blocker.command"; do
+    cp "$here/$f" "$ours/$f"
+done
+chown -R "$user" "$ours"
+chmod +x "$ours/Uninstall VRCX Bot Blocker.command"
+
+as_user /bin/sh -c '. "$1/common.sh" && bb_install "$2/custom.js" "$1/bot-blocker.js"' sh "$ours" "$vrcx"
+
+# Restart VRCX when it runs, so the plugin loads now.
+if pgrep -x VRCX >/dev/null 2>&1; then
+    as_user osascript -e 'quit app "VRCX"' >/dev/null 2>&1 || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -x VRCX >/dev/null 2>&1 || break
+        sleep 1
+    done
+    pkill -x VRCX 2>/dev/null || true
+    sleep 1
+    as_user open -a VRCX || true
+fi
+exit 0

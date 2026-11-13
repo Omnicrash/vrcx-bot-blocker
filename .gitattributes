@@ -1,0 +1,4 @@
+*.nsi text eol=crlf
+*.js text eol=lf
+*.c text eol=lf
+*.sh text eol=lf

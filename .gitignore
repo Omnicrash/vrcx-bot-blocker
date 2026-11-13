@@ -1,0 +1,12 @@
+# The installers keep a backup next to custom.js; never commit one by accident.
+*.bak
+
+# OS and editor clutter
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Build output
+dist/

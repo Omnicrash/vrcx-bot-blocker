@@ -1,0 +1,66 @@
+# Pushing a version tag (v1.2.3) builds every installer and publishes the GitHub release:
+# the plugin by itself, plus one installer per platform.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: # builds everything without publishing, to try the installers
+
+permissions:
+  contents: write
+
+env:
+  # A tag build takes its version from the tag; a manual run from the VERSION file.
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+
+jobs:
+  windows-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 nsis librsvg2-bin imagemagick
+      - name: Build
+        run: ./build.sh windows linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-linux
+          path: |
+            dist/bot-blocker.js
+            dist/*.exe
+            dist/*.sh
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: ./build.sh macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.pkg
+
+  release:
+    needs: [windows-linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --title "VRCX Bot Blocker ${GITHUB_REF_NAME#v}" --notes-file - <<'EOF'
+          Download the installer for your system:
+
+          - **Windows:** `VRCX-Bot-Blocker-…-setup.exe`. SmartScreen may warn: More info, then Run anyway.
+          - **macOS:** `VRCX-Bot-Blocker-…-macos.pkg`. If macOS blocks it, allow it under System Settings > Privacy & Security > Open Anyway.
+          - **Linux:** `VRCX-Bot-Blocker-…-linux.sh`, run it with `sh`.
+          - **Manual:** `bot-blocker.js` is the plugin by itself; see the README.
+          EOF
