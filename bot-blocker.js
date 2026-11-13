@@ -70,7 +70,6 @@
     // default name, the Robot avatar and Visitor rank: each of those alone catches real people.
     const SETTINGS_KEY = 'botBlocker.rules';
     const RULES = ['name', 'robot', 'visitor', 'bio', 'nuisance', 'probable', 'age'];
-    const FROM_LOG = ['name']; // known from the game log alone; the rest needs the profile
     const RULE_LABELS = {
         name: 'Default name',
         robot: 'Robot avatar',
@@ -88,14 +87,18 @@
         syncGroups: false,
         ageDays: 7,
         bioWords: ['hexed.cc'], // keywords and websites the bio rule looks for
+        // The checked rules without "always" block once at least this many of them fit. The
+        // default, 2 of default name, Robot and a new account, matches the shared list's rules;
+        // Visitor rank stays off since nearly every new account is still a Visitor.
+        needed: 2,
         rules: {
             name: { on: true, always: false },
             robot: { on: true, always: false },
-            visitor: { on: true, always: false },
+            visitor: { on: false, always: false },
             bio: { on: true, always: true },
             nuisance: { on: true, always: true },
             probable: { on: false, always: true },
-            age: { on: false, always: true }
+            age: { on: true, always: false }
         }
     };
 
@@ -108,7 +111,11 @@
         for (const r of RULES) {
             rules[r] = { ...DEFAULT_SETTINGS.rules[r], ...(saved.rules?.[r] || {}) };
         }
-        return { ...DEFAULT_SETTINGS, ...saved, rules };
+        // Settings from before the "at least" number required every checked rule; they keep
+        // working that way until the user changes the number.
+        const needed =
+            saved.needed ?? (saved.rules ? Math.max(1, RULES.filter((r) => rules[r].on && !rules[r].always).length) : DEFAULT_SETTINGS.needed);
+        return { ...DEFAULT_SETTINGS, ...saved, rules, needed };
     }
 
     function saveSettings(next) {
@@ -150,6 +157,12 @@
         const clean = [...new Set(words.map((w) => w.trim()).filter(Boolean))];
         saveSettings({ ...settings(), bioWords: clean });
         return clean;
+    }
+
+    function setNeeded(n) {
+        const v = Math.max(1, Math.min(RULES.length, Math.round(Number(n)) || DEFAULT_SETTINGS.needed));
+        saveSettings({ ...settings(), needed: v });
+        return v;
     }
 
     function setAgeDays(days) {
@@ -226,13 +239,13 @@
             name: hasDefaultName(displayName, userId),
             robot: avatarByName.get(displayName) === BOT_AVATAR
         };
-        // A checked default name must fit before the profile is worth a look. The avatar may be
-        // missing from the log, so the profile icon answers that one too.
-        const togetherPossible = together.length > 0 && together.every((r) => !FROM_LOG.includes(r) || fromLog[r]);
-        // Seen in the log with a default name AND the Robot, a bot is looked up and blocked even
-        // after it left again; anyone else only while still here.
-        const logSigns = together.filter((r) => r === 'name' || r === 'robot');
-        const fromLogOnly = togetherPossible && logSigns.length > 0 && logSigns.every((r) => fromLog[r]);
+        // At least `needed` of the checked rules must fit; never more than there are checked.
+        const needed = Math.min(s.needed, together.length);
+        const togetherPossible = together.length > 0;
+        // Seen in the log with enough signs already (a default name and the Robot), a bot is looked
+        // up and blocked even after it left again; anyone else only while still here.
+        const logSigns = together.filter((r) => (r === 'name' || r === 'robot') && fromLog[r]);
+        const fromLogOnly = togetherPossible && needed > 0 && logSigns.length >= needed;
         const groupIds = !only || only.rule !== 'all' ? only?.groupIds || groups().map((g) => g.id) : groups().map((g) => g.id);
         // Everything else only looks at players still here: the startup replay of the log brings
         // back hours of joins, and checking all of those would flood the API.
@@ -264,9 +277,10 @@
             };
             let reason = null;
             let caughtBy = null; // which of this user's rules fired: sent along as research data
-            if (togetherPossible && (fromLogOnly || here) && together.every((r) => fits[r])) {
-                reason = together.map((r) => (r === 'bio' ? `"${fits.bio}" in bio` : RULE_LABELS[r])).join(' + ');
-                caughtBy = { together: [...together] };
+            const fitting = together.filter((r) => fits[r]);
+            if (togetherPossible && (fromLogOnly || here) && fitting.length >= needed) {
+                reason = fitting.map((r) => (r === 'bio' ? `"${fits.bio}" in bio` : RULE_LABELS[r])).join(' + ');
+                caughtBy = { together: [...together], needed, fitting };
             }
             const hit = here && alone.find((r) => fits[r]);
             if (!reason && hit) {
@@ -542,7 +556,8 @@
         const on = RULES.filter((r) => s.rules[r].on);
         const alone = on.filter((r) => s.rules[r].always);
         const together = on.filter((r) => !s.rules[r].always);
-        return alone.some((r) => fits[r]) || (together.length > 0 && together.every((r) => fits[r]));
+        const needed = Math.min(s.needed, together.length);
+        return alone.some((r) => fits[r]) || (together.length > 0 && together.filter((r) => fits[r]).length >= needed);
     }
 
     // Accounts that couldn't be checked or blocked wait before the next try, and are given up on
@@ -593,13 +608,15 @@
         }
     }
 
-    // A fresh install's checkbox wins once; after that the switch on the page decides.
+    // A fresh install starts from the default rules, once, with the installer's sharing choice;
+    // after that the page decides. The group list, the block history and the never-block-again
+    // list are the user's own and stay.
     function applyInstallChoice() {
         if (INSTALL_STAMP === 'dev' || localStorage.getItem('botBlocker.installStamp') === INSTALL_STAMP) {
             return;
         }
         try {
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings(), share: SHARE_DEFAULT }));
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...DEFAULT_SETTINGS, share: SHARE_DEFAULT }));
             localStorage.setItem('botBlocker.installStamp', INSTALL_STAMP);
         } catch {}
     }
@@ -876,6 +893,9 @@
                 ${ruleRow('probable', 'Almost Nuisance')}
                 ${ruleRow('age', `Account younger than
                     <input class="bb-input bb-days" type="number" min="1" max="3650" value="${s.ageDays}" /> days`)}
+                <div class="bb-rule">At least
+                    <input class="bb-input bb-days" data-act="needed" type="number" min="1" max="7" value="${s.needed}" />
+                    of the checked rules without Always</div>
                 <h3>Blocked groups</h3>
                 <form class="bb-add">
                     <input class="bb-input" placeholder="Group link, ID or code" />
@@ -954,6 +974,8 @@
         const days = panel.querySelector('.bb-days');
         days.onclick = (e) => e.preventDefault(); // a click in the field shouldn't toggle the rule
         days.onchange = () => (days.value = setAgeDays(days.value));
+        const needed = panel.querySelector('[data-act="needed"]');
+        needed.onchange = () => (needed.value = setNeeded(needed.value));
         panel.querySelectorAll('[data-act="remove"]').forEach((btn) => {
             btn.onclick = () => removeGroup(btn.dataset.id);
         });
@@ -1182,6 +1204,7 @@
         syncShared,
         shared: sharedList,
         setAgeDays,
+        setNeeded,
         setBioWords,
         addGroup: async (input) => addGroup(await resolveGroup(input)),
         removeGroup,

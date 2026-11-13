@@ -221,7 +221,9 @@ admin.get('/', (c) => {
                           ${queue.map(
                               (q) => html`<tr>
                                   <td>${vrcUser(q.userId, q.displayName)}</td>
-                                  <td>${q.groups.map((g) => html`<a href="https://vrchat.com/home/group/${g.id}" target="_blank">${g.name}</a> `)}</td>
+                                  <td>${q.groups.map(
+                                      (g) => html`<div>${g.name} · ${g.id ? html`<a href="https://vrchat.com/home/group/${g.id}" target="_blank">group page</a>` : html`<span class="muted">no link</span>`}</div>`
+                                  )}</td>
                                   <td>${q.reporters}</td>
                                   <td class="muted">${when(q.firstAt)}</td>
                                   <td>
