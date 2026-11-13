@@ -33,3 +33,13 @@ test('an account VRChat no longer has leaves the list at its re-check, for good'
     reevaluate() // the rules never put it back from the old check
     expect((await list()).added.map((e) => e.userId)).not.toContain(DOOMED)
 })
+
+test('re-checks wait while reports are pending, and only spend spare lookups', async () => {
+    const { recheckAllowance } = await import('../src/reports')
+    expect(recheckAllowance()).toBeGreaterThan(0)
+    db.insert(schema.reports)
+        .values({ userId: 'usr_eeeeeeee-0000-0000-0000-00000000eeee', displayName: 'x', grounds: {}, install: 'x', ip: '', receivedAt: Date.now(), outcome: 'pending' })
+        .run()
+    expect(recheckAllowance()).toBe(0)
+    db.delete(schema.reports).where(eq(schema.reports.userId, 'usr_eeeeeeee-0000-0000-0000-00000000eeee')).run()
+})

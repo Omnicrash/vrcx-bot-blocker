@@ -116,7 +116,10 @@ let pausedUntil = 0
 const pause = (ms: number) => {
     pausedUntil = Math.max(pausedUntil, Date.now() + ms)
 }
-export const budget = () => ({ usedToday, perDay: LOOKUPS_PER_DAY, pausedUntil: pausedUntil > Date.now() ? pausedUntil : null })
+export const budget = () => ({ usedToday: usedOn(), perDay: LOOKUPS_PER_DAY, pausedUntil: pausedUntil > Date.now() ? pausedUntil : null })
+const usedOn = () => (day === new Date().toISOString().slice(0, 10) ? usedToday : 0)
+// Lookups still allowed today (UTC), 0 while paused.
+export const lookupsLeftToday = () => (pausedUntil > Date.now() ? 0 : Math.max(0, LOOKUPS_PER_DAY - usedOn()))
 
 function mayLookUp(): boolean {
     const today = new Date().toISOString().slice(0, 10)

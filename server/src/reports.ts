@@ -5,7 +5,7 @@ import { and, asc, count, desc, eq, gt, inArray, isNull, lt, max, ne, or, sql } 
 import { BIO_WORDS, RECHECK_AFTER_DAYS, RECHECK_PER_HOUR } from './config'
 import { db, schema, sqlite } from './db'
 import { DEFAULT_RULES, DEFAULT_WORDS, type Facts, type Grounds, factsOf, judge, type ServerRules, worthReporting } from './rules'
-import { getUser } from './vrchat'
+import { getUser, lookupsLeftToday } from './vrchat'
 
 const { reports, entries, settings, checks, words, whitelist, recommendations } = schema
 
@@ -311,10 +311,29 @@ export function wake() {
     })()
 }
 
+// How many re-checks this hour may spend. They're lazy: none while reports wait, and only the
+// lookups left today after a reserve for new players (twice what new players took over the past
+// day, at least 50), spread over the hours left today. A busy day leaves less for them.
+export function recheckAllowance(): number {
+    const now = Date.now()
+    if ((db.select({ n: count() }).from(reports).where(eq(reports.outcome, 'pending')).get()?.n ?? 0) > 0) {
+        return 0
+    }
+    const newLastDay = db.select({ n: count() }).from(checks).where(gt(checks.firstCheckedAt, now - 86_400_000)).get()?.n ?? 0
+    const spare = lookupsLeftToday() - Math.max(50, 2 * newLastDay)
+    const endOfDay = new Date(now).setUTCHours(24, 0, 0, 0)
+    const hoursLeft = Math.max(1, Math.ceil((endOfDay - now) / 3_600_000))
+    return Math.max(0, Math.min(RECHECK_PER_HOUR, Math.floor(spare / hoursLeft)))
+}
+
 // The slow re-check: a few listed entries an hour whose check is old, so renamed or ranked-up
 // accounts drop off in time, and accounts VRChat deleted or banned leave the list for good.
 // Reports never cause a second lookup.
 export async function recheckSome() {
+    const allowance = recheckAllowance()
+    if (!allowance) {
+        return
+    }
     const cutoff = Date.now() - RECHECK_AFTER_DAYS * 86_400_000
     const due = db
         .select({ id: entries.userId })
@@ -322,7 +341,7 @@ export async function recheckSome() {
         .leftJoin(checks, eq(checks.userId, entries.userId))
         .where(and(eq(entries.removed, false), or(isNull(checks.checkedAt), lt(checks.checkedAt, cutoff))))
         .orderBy(sql`coalesce(${checks.checkedAt}, 0)`)
-        .limit(RECHECK_PER_HOUR)
+        .limit(allowance)
         .all()
     for (const { id } of due) {
         const got = await lookUp(id)
