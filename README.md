@@ -71,7 +71,7 @@ The rules live on the **Bot Blocker** page in VRCX's side menu. Each one can be 
 | Account younger than a number of days (7 to start with) | on |
 | Visitor rank | off |
 | Bio mentions a word or site from your list, hexed.cc to start (also written `hexed(.)cc`, `hexed dot cc` and so on). Reads the bio, its links, the pronouns and the status text | on, always block |
-| Nuisance rank | on, always block |
+| Nuisance rank | off |
 | Almost Nuisance rank | off |
 
 How they combine:
@@ -103,7 +103,8 @@ when its own rules say so:
 - a word or site on the server's approved list (hexed.cc to start) in the bio, its links, the
   pronouns or the status.
 
-New words that plugins report wait for a person to approve them. Nuisance rank is never shared.
+New words that plugins report wait for a person to approve them. Blocks for Nuisance or Almost
+Nuisance rank are your own: they're never shared, and the shared list never undoes them.
 Players blocked for being in one of your groups are only sent when you tick **Also sync group
 blocks**, and a person reviews those by hand before anyone else blocks them.
 
@@ -142,7 +143,8 @@ applied to everyone again. Of the reporters it keeps only the random install ID.
 A daily review looks at newly listed players. Anyone who turns out to be a real person is
 **whitelisted**: taken off the list for every user, their blocks from the list undone, and
 everything stored about them deleted; only a scrambled hash of their ID stays, so they're never
-listed again. You can ask for the same yourself: open an issue on this repository with your
+listed again. The server never sends out who's on the whitelist: each plugin asks only about the
+players it blocked itself. You can ask for the same yourself: open an issue on this repository with your
 VRChat profile link, and you'll be whitelisted and your data deleted.
 
 ## Options

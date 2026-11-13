@@ -16,7 +16,7 @@ const reportPlayer = (userId: string, grounds: object) =>
     app.request('/v1/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ install: crypto.randomUUID(), userId, displayName: 'x', grounds }) })
 const api = (path: string, body?: object, token = 'review-test-token') =>
     admin.request(path, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Host: 'xdisk:3061' }, body: body ? JSON.stringify(body) : undefined })
-const list = async (since = 0) => (await (await app.request(`/v1/list?since=${since}`)).json()) as { seq: number; added: { userId: string }[]; whitelisted: string[] }
+const list = async (since = 0) => (await (await app.request(`/v1/list?since=${since}`)).json()) as { seq: number; added: { userId: string }[]; whitelistSeq: number }
 
 test('whitelisting takes a player off the list and deletes everything stored about them', async () => {
     await reportPlayer(REAL, { name: true, robot: true })
@@ -27,7 +27,13 @@ test('whitelisting takes a player off the list and deletes everything stored abo
     const cookie = testSession()
     await admin.request(`/whitelist/${REAL}`, { method: 'POST', headers: { Cookie: cookie, Host: 'xdisk:3061', Origin: 'http://xdisk:3061', 'Sec-Fetch-Site': 'same-origin' } })
     const after = await list(before.seq)
-    expect(after.whitelisted).toEqual([hash(REAL)])
+    expect(after.whitelistSeq).toBeGreaterThan(0)
+    expect(JSON.stringify(after)).not.toContain(hash(REAL)) // the whitelist itself never goes out
+    expect(JSON.stringify(await list())).not.toContain(hash(REAL))
+    const ask = async (hashes: string[]) =>
+        (await (await app.request('/v1/cleared', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hashes }) })).json()) as { cleared: string[] }
+    expect((await ask([hash(REAL), hash(GROUPIE)])).cleared).toEqual([hash(REAL)])
+    expect((await ask([])).cleared).toEqual([])
     expect((await list()).added.map((e) => e.userId)).not.toContain(REAL)
     expect(db.select().from(schema.reports).where(eq(schema.reports.userId, REAL)).all()).toEqual([])
     expect(db.select().from(schema.checks).where(eq(schema.checks.userId, REAL)).all()).toEqual([])

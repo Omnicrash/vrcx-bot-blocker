@@ -1,7 +1,7 @@
 // Takes reports in, looks each player up once, and keeps the shared list in line with the
 // acceptance rules. A lookup is reused for good; only listed entries are re-checked, slowly.
 import { createHash } from 'node:crypto'
-import { and, asc, count, desc, eq, gt, lt, max, ne, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, inArray, lt, max, ne, sql } from 'drizzle-orm'
 import { BIO_WORDS, RECHECK_AFTER_DAYS, RECHECK_PER_HOUR } from './config'
 import { db, schema, sqlite } from './db'
 import { DEFAULT_RULES, DEFAULT_WORDS, type Facts, type Grounds, factsOf, judge, type ServerRules, worthReporting } from './rules'
@@ -339,21 +339,29 @@ export function startBackground() {
 
 // ---- for plugins and the management page ------------------------------------------------------
 
-// Everything changed after `since`: added and removed players, and whitelisted ones (as hashes,
-// so the plugins can find them among their own blocks without the server sending a name).
+// Everything changed after `since`: added and removed players. The whitelist itself never goes
+// out (it would be a list of real players): `whitelistSeq` only says when it last changed, and
+// plugins then ask about their own blocks (`clearedAmong`).
 export function changesSince(since: number, limit: number) {
     const rows = db.select().from(entries).where(gt(entries.seq, since)).orderBy(asc(entries.seq)).limit(limit + 1).all()
     const page = rows.slice(0, limit)
     const more = rows.length > limit
-    const upTo = more ? page.at(-1)!.seq : Number.MAX_SAFE_INTEGER
-    const cleared = db.select().from(whitelist).where(and(gt(whitelist.seq, since), lt(whitelist.seq, upTo + 1))).all()
+    const whitelistSeq = db.select({ m: max(whitelist.seq) }).from(whitelist).get()?.m ?? 0
     return {
-        seq: Math.max(since, page.at(-1)?.seq ?? 0, ...cleared.map((w) => w.seq)),
+        seq: more ? page.at(-1)!.seq : Math.max(since, currentSeq()),
         more,
         added: page.filter((e) => !e.removed).map((e) => ({ userId: e.userId, displayName: e.displayName, grounds: e.grounds })),
         removed: page.filter((e) => e.removed).map((e) => e.userId),
-        whitelisted: cleared.map((w) => w.hash)
+        whitelistSeq
     }
+}
+
+// Which of these hashes (a plugin's own blocks) are whitelisted. Nothing about the question is kept.
+export function clearedAmong(hashes: string[]): string[] {
+    if (!hashes.length) {
+        return []
+    }
+    return db.select({ h: whitelist.hash }).from(whitelist).where(inArray(whitelist.hash, hashes)).all().map((r) => r.h)
 }
 
 // A person takes a player off the list; only a person puts them back.

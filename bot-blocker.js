@@ -80,6 +80,9 @@
         probable: 'Almost Nuisance',
         age: 'New account'
     };
+    // VRChat's own nuisance marks: likely real people the user doesn't want around. Blocks they
+    // cause stay out of the shared list entirely, reports and whitelist alike.
+    const PERSONAL_RULES = ['nuisance', 'probable'];
     const DEFAULT_SETTINGS = {
         excludeFriends: true,
         share: SHARE_DEFAULT, // report blocks to the shared blocklist and block what's on it
@@ -100,7 +103,7 @@
             robot: { on: true, always: false },
             visitor: { on: false, always: false },
             bio: { on: true, always: true },
-            nuisance: { on: true, always: true },
+            nuisance: { on: false, always: true },
             probable: { on: false, always: true },
             age: { on: true, always: false }
         }
@@ -261,9 +264,9 @@
 
         checking.add(userId);
         try {
-            if (await isCleared(userId)) {
-                return; // the shared list cleared them as a real player
-            }
+            // Cleared by the shared list as a real player: only the personal rules (Nuisance,
+            // Almost Nuisance, groups) still apply to them.
+            const cleared = await isCleared(userId);
             // Asked again once it's this player's turn: the replay has finished by then, so
             // someone who already left is skipped instead of looked up.
             const user = await queued(() => (fromLogOnly || present.has(userId) ? getUser(userId) : null));
@@ -283,6 +286,13 @@
                 age: days < s.ageDays,
                 ageDays: days
             };
+            if (cleared) {
+                for (const r of RULES) {
+                    if (!PERSONAL_RULES.includes(r)) {
+                        fits[r] = false;
+                    }
+                }
+            }
             let reason = null;
             let caughtBy = null; // which of this user's rules fired: sent along as research data
             const fitting = together.filter((r) => fits[r]);
@@ -313,11 +323,14 @@
             if (reason) {
                 // Rule blocks are reported; group blocks only with "Also sync group blocks", and
                 // then as group reports, which wait for manual review on the server.
-                let grounds = groundsOf(fits);
+                // Nuisance players are likely real people the user just doesn't want around: a block
+                // where a Nuisance mark fired stays personal and is never reported.
+                const personal = PERSONAL_RULES.some((r) => caughtBy?.always === r || caughtBy?.fitting?.includes(r));
+                let grounds = personal ? null : groundsOf(fits);
                 if (viaGroup) {
-                    grounds = s.syncGroups ? { ...grounds, group: viaGroup.name, groupId: viaGroup.id } : null;
+                    grounds = s.syncGroups && !personal ? { ...grounds, group: viaGroup.name, groupId: viaGroup.id } : null;
                 }
-                await block(displayName, userId, reason, grounds, false, caughtBy);
+                await block(displayName, userId, reason, grounds, false, caughtBy, personal || !!viaGroup);
             }
         } catch (err) {
             console.warn(TAG, 'could not check', displayName, userId, err);
@@ -334,7 +347,9 @@
     // `grounds`: what the player was caught on, reported to the shared list. `shared`: the block
     // came from that list, so it is neither reported back nor announced, and is undone again when
     // the list drops the player. Returns whether VRChat took the block.
-    async function block(displayName, userId, reason, grounds = null, shared = false, caughtBy = null) {
+    // `personal`: a Nuisance or group block, the user's own call, which the shared list's
+    // whitelist never undoes.
+    async function block(displayName, userId, reason, grounds = null, shared = false, caughtBy = null, personal = false) {
         if (DRY_RUN) {
             console.info(TAG, 'would block', displayName, userId, `(${reason})`);
             return false;
@@ -342,7 +357,7 @@
         handled.add(userId);
         try {
             await window.request.playerModerationRequest.sendPlayerModeration({ moderated: userId, type: 'block' });
-            remember(BLOCKED_KEY, { userId, displayName, reason, at: new Date().toISOString() });
+            remember(BLOCKED_KEY, { userId, displayName, reason, at: new Date().toISOString(), ...(personal ? { personal: true } : {}) });
             console.info(TAG, 'blocked', displayName, userId, `(${reason})`);
             if (shared) {
                 saveList(SHARED_BLOCKS_KEY, [...new Set([...loadList(SHARED_BLOCKS_KEY), userId])]);
@@ -375,6 +390,7 @@
     const OUTBOX_KEY = 'botBlocker.outbox';
     const SHARED_KEY = 'botBlocker.shared';
     const SHARED_SEQ_KEY = 'botBlocker.sharedSeq';
+    const CLEARED_SEQ_KEY = 'botBlocker.clearedSeq'; // the whitelist change last checked against
     const SHARED_BLOCKS_KEY = 'botBlocker.sharedBlocks'; // blocks that came from the list
     const SERVER_RULES_KEY = 'botBlocker.serverRules';
     const REPORTED_KEY = 'botBlocker.reported'; // players this install reported to the list
@@ -505,6 +521,7 @@
             } catch {}
             const list = sharedList();
             const dropped = [];
+            let whitelistSeq = null;
             let since = Number(localStorage.getItem(SHARED_SEQ_KEY) || 0);
             for (let page = 0; page < 50; page++) {
                 const res = await fetch(`${API}/list?since=${since}`);
@@ -519,8 +536,8 @@
                     delete list[id];
                     dropped.push(id);
                 }
-                if (body.whitelisted?.length) {
-                    await applyWhitelist(body.whitelisted, list);
+                if (Number.isFinite(body.whitelistSeq)) {
+                    whitelistSeq = body.whitelistSeq;
                 }
                 since = body.seq;
                 localStorage.setItem(SHARED_KEY, JSON.stringify(list));
@@ -530,6 +547,15 @@
                 }
             }
             await undoSharedBlocks(dropped);
+            // The whitelist changed, or this is the first sync since VRCX started: ask about the
+            // players this install blocked or holds from the list.
+            if (whitelistSeq !== null && (!checkedThisRun || String(whitelistSeq) !== localStorage.getItem(CLEARED_SEQ_KEY))) {
+                if (await checkCleared(list)) {
+                    checkedThisRun = true;
+                    localStorage.setItem(CLEARED_SEQ_KEY, String(whitelistSeq));
+                    localStorage.setItem(SHARED_KEY, JSON.stringify(list));
+                }
+            }
             renderPanel();
         } catch {
         } finally {
@@ -559,22 +585,48 @@
         saveList(SHARED_BLOCKS_KEY, [...fromList]);
     }
 
-    // The list cleared these players as real people (by hash). They leave the local copy, their
-    // blocks are undone as the user chose, and this install's own rules leave them alone from now
-    // on. Blocks the user made by hand aren't Bot Blocker's and are never touched.
-    async function applyWhitelist(hashes, list) {
-        const cleared = new Set([...loadList(CLEARED_KEY), ...hashes]);
-        saveList(CLEARED_KEY, [...cleared]);
-        const ours = new Set(loadBlocked().map((b) => b.userId)); // every block Bot Blocker made
-        const tied = new Set([...loadList(SHARED_BLOCKS_KEY), ...loadList(REPORTED_KEY)]); // tied to the list
-        const candidates = new Set([...ours, ...tied, ...Object.keys(list)]);
+    // The server never hands out its whitelist: the plugin sends the hashes of the players it
+    // blocked or holds from the list, and gets back only those the list cleared as real people.
+    // They leave the local copy, their blocks are undone as the user chose, and this install's
+    // rules leave them alone from now on. Nuisance and group blocks are the user's own call and
+    // blocks made by hand aren't Bot Blocker's: neither is ever touched.
+    let checkedThisRun = false;
+    async function checkCleared(list) {
+        const blocked = loadBlocked();
+        // Records from before `personal` existed are recognized by their reason.
+        const personal = new Set(blocked.filter((b) => b.personal || /Nuisance|member of /.test(b.reason || '')).map((b) => b.userId));
+        const ours = new Set(blocked.map((b) => b.userId).filter((id) => !personal.has(id)));
+        const tied = new Set([...loadList(SHARED_BLOCKS_KEY), ...loadList(REPORTED_KEY)].filter((id) => !personal.has(id)));
+        const byHash = new Map();
+        for (const userId of new Set([...ours, ...tied, ...Object.keys(list)])) {
+            byHash.set(await idHash(userId), userId);
+        }
+        const hashes = [...byHash.keys()];
+        const cleared = [];
+        for (let i = 0; i < hashes.length; i += 1000) {
+            try {
+                const res = await fetch(`${API}/cleared`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hashes: hashes.slice(i, i + 1000) })
+                });
+                if (!res.ok) {
+                    return false; // asked again on the next sync
+                }
+                cleared.push(...((await res.json()).cleared || []));
+            } catch {
+                return false;
+            }
+        }
+        saveList(CLEARED_KEY, [...new Set([...loadList(CLEARED_KEY), ...cleared])]);
         const undo = [];
-        for (const userId of candidates) {
-            if (!hashes.includes(await idHash(userId))) {
+        for (const h of cleared) {
+            const userId = byHash.get(h);
+            if (!userId) {
                 continue;
             }
             delete list[userId];
-            handled.add(userId); // never blocked again by this install
+            handled.add(userId);
             if (settings().unblockCleared ? ours.has(userId) : tied.has(userId)) {
                 undo.push(userId);
             }
@@ -586,6 +638,7 @@
             } catch {}
         }
         saveList(SHARED_BLOCKS_KEY, loadList(SHARED_BLOCKS_KEY).filter((id) => !undo.includes(id)));
+        return true;
     }
 
     // Whether this user's own rules would block an account with these grounds.
