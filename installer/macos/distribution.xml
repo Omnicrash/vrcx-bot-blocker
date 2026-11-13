@@ -16,7 +16,7 @@
         <pkg-ref id="net.omnicrash.vrcx-bot-blocker.reset"/>
     </choice>
     <choice id="share" title="Use and contribute to the shared blocklist" start_selected="true"
-            description="Blocks the bots other users have reported, often before they reach you, and reports the bots you block that pass the shared list's checks. The server checks every report on VRChat itself before it is listed. Sent: the blocked player's ID and name, what they were caught on, and a random ID for this install. Nothing about you or your VRChat account. You can switch it off later on the Bot Blocker page in VRCX.">
+            description="Blocks the bots other users have reported, often before they reach you, and reports the bots you block that pass the shared list's checks. The server checks every report on VRChat itself before it is listed. Sent: the blocked player's ID and name, what they were caught on, and a random ID for this install. You can switch it off later on the Bot Blocker page in VRCX.">
         <pkg-ref id="net.omnicrash.vrcx-bot-blocker.share"/>
     </choice>
     <choice id="main" title="VRCX Bot Blocker" start_selected="true" start_enabled="false">

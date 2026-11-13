@@ -56,7 +56,7 @@ Function SharePage
     Pop $0
     ${NSD_CreateCheckbox} 0 0 100% 12u "Use the shared blocklist"
     Pop $ShareBox
-    ${NSD_CreateLabel} 12u 16u -12u 52u "Blocks the bots other users have reported, often before they reach you, and reports the bots you block that pass the shared list's checks. The server checks every report on VRChat itself before it is listed.$\r$\n$\r$\nSent: the blocked player's ID and name, what they were caught on, and a random ID for this install. Nothing about you or your VRChat account.$\r$\n$\r$\nYou can switch it off later on the Bot Blocker page in VRCX."
+    ${NSD_CreateLabel} 12u 16u -12u 52u "Blocks the bots other users have reported, often before they reach you, and reports the bots you block that pass the shared list's checks. The server checks every report on VRChat itself before it is listed.$\r$\n$\r$\nSent: the blocked player's ID and name, what they were caught on, and a random ID for this install.$\r$\n$\r$\nYou can switch it off later on the Bot Blocker page in VRCX."
     Pop $0
     ${If} $Share == 1
         ${NSD_Check} $ShareBox

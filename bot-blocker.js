@@ -16,6 +16,42 @@
 // Nobody is ever blocked twice: anyone this script blocked before, and anyone you unblock in
 // VRCX yourself, is left alone from then on.
 (function () {
+    const VERSION = '2.0.0'; // build.sh checks it against the VERSION file
+    const UPDATE_KEY = 'botBlocker.update'; // a newer release, downloaded and its signature checked
+
+    // A newer release the updater downloaded runs in place of this copy. If it fails to start,
+    // this copy throws it away and carries on.
+    if (!window.botBlockerVersion) {
+        let staged = null;
+        try {
+            staged = JSON.parse(localStorage.getItem(UPDATE_KEY) || 'null');
+        } catch {}
+        if (staged && newerVersion(staged.version, VERSION)) {
+            const script = document.createElement('script');
+            script.textContent = staged.code;
+            document.head.appendChild(script);
+            if (window.botBlockerVersion === staged.version) {
+                return;
+            }
+            console.warn('[BotBlocker]', `update ${staged.version} didn't start, running ${VERSION}`);
+            localStorage.removeItem(UPDATE_KEY);
+        } else if (staged && staged.version !== VERSION) {
+            localStorage.removeItem(UPDATE_KEY); // an installer put a newer version in place since
+        }
+    }
+    window.botBlockerVersion = VERSION;
+
+    function newerVersion(a, b) {
+        const pa = String(a).split('.').map(Number);
+        const pb = String(b).split('.').map(Number);
+        for (let i = 0; i < 3; i++) {
+            if ((pa[i] || 0) !== (pb[i] || 0)) {
+                return (pa[i] || 0) > (pb[i] || 0);
+            }
+        }
+        return false;
+    }
+
     const DRY_RUN = false; // true: only log what would be blocked
     const BOT_AVATAR = 'Robot';
     const BLOCKED_KEY = 'botBlocker.blocked';
@@ -92,6 +128,7 @@
         // When the shared list clears someone as a real player: undo every block Bot Blocker made
         // on them. Off: only the blocks that came from the list or that this install reported.
         unblockCleared: true,
+        autoUpdate: true, // download new releases from GitHub; they run from the next start
         ageDays: 7,
         bioWords: ['hexed.cc'], // keywords and websites the bio rule looks for
         // The checked rules without "always" block once at least this many of them fit. The
@@ -521,6 +558,7 @@
             } catch {}
             const list = sharedList();
             const dropped = [];
+            const gone = new Set(); // accounts VRChat no longer has: nothing to unblock
             let whitelistSeq = null;
             let since = Number(localStorage.getItem(SHARED_SEQ_KEY) || 0);
             for (let page = 0; page < 50; page++) {
@@ -531,6 +569,9 @@
                 }
                 for (const e of body.added || []) {
                     list[e.userId] = { displayName: e.displayName, grounds: e.grounds };
+                }
+                for (const id of body.gone || []) {
+                    gone.add(id);
                 }
                 for (const id of body.removed || []) {
                     delete list[id];
@@ -546,7 +587,10 @@
                     break;
                 }
             }
-            await undoSharedBlocks(dropped);
+            await undoSharedBlocks(dropped.filter((id) => !gone.has(id)));
+            if (gone.size) {
+                saveList(SHARED_BLOCKS_KEY, loadList(SHARED_BLOCKS_KEY).filter((id) => !gone.has(id)));
+            }
             // The whitelist changed, or this is the first sync since VRCX started: ask about the
             // players this install blocked or holds from the list.
             if (whitelistSeq !== null && (!checkedThisRun || String(whitelistSeq) !== localStorage.getItem(CLEARED_SEQ_KEY))) {
@@ -951,6 +995,12 @@
                 font-size: 13px; }
             .bb-groupbar .bb-name { flex: 1; }
             .bb-groupbar.bb-on { border-color: var(--destructive); }
+            .bb-toast { position: fixed; right: 20px; bottom: 20px; z-index: 3000; display: flex; gap: 10px;
+                align-items: center; max-width: 420px; padding: 10px 10px 10px 16px; font-size: 13px;
+                background: var(--popover, var(--background)); color: var(--popover-foreground, var(--foreground));
+                border: 1px solid var(--border); border-radius: var(--radius, .375rem);
+                box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+            .bb-toast span { flex: 1; }
         `;
         document.head.appendChild(css);
     }
@@ -1067,6 +1117,11 @@
                 <div class="bb-rule"><label title="When the shared list clears someone as a real player, undo any block Bot Blocker made on them.">
                     <input type="checkbox" data-act="unblock-cleared" ${s.unblockCleared ? 'checked' : ''} ${s.share ? '' : 'disabled'} />
                     <span>Unblock players the shared list clears</span></label></div>
+                <h3>Updates</h3>
+                <div class="bb-rule"><label>
+                    <input type="checkbox" data-act="auto-update" ${s.autoUpdate ? 'checked' : ''} />
+                    <span>Update automatically</span></label>
+                    <span class="bb-muted">${esc(VERSION)}</span></div>
                 </section>
                 <section>
                 <h3>Recently blocked</h3>
@@ -1103,6 +1158,10 @@
         };
         panel.querySelector('[data-act="sync-groups"]').onchange = (e) => setSyncGroups(e.target.checked);
         panel.querySelector('[data-act="unblock-cleared"]').onchange = (e) => saveSettings({ ...settings(), unblockCleared: e.target.checked });
+        panel.querySelector('[data-act="auto-update"]').onchange = (e) => {
+            saveSettings({ ...settings(), autoUpdate: e.target.checked });
+            e.target.checked && checkForUpdate();
+        };
         panel.querySelectorAll('[data-word]').forEach((btn) => {
             btn.onclick = () => {
                 setBioWords(settings().bioWords.filter((w) => w !== btn.dataset.word));
@@ -1271,6 +1330,80 @@
 
     // ---- start ---------------------------------------------------------------------------------
 
+    // ---- updates ---------------------------------------------------------------------------------
+    // New releases come from GitHub. A release only runs if it carries a signature from the
+    // release key, which isn't on GitHub: taking over the repository isn't enough to ship code.
+    const UPDATE_REPO = 'Omnicrash/vrcx-bot-blocker';
+    const UPDATE_EVERY_MS = 6 * 3_600_000;
+    const RELEASE_KEY = { kty: 'EC', crv: 'P-256', x: 'T_O2s-sQ3VgyfqTX3k6eqe7HcL8jJSJnre5lXw3C5AI', y: 'rp9TekxTHY2sMq7wKBRsioXn1A67li1H_g3VS6ihQRs' };
+    let updateShown = false;
+
+    async function signedRelease(code, signature) {
+        const key = await crypto.subtle.importKey('jwk', RELEASE_KEY, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+        const sig = Uint8Array.from(atob(signature.trim()), (c) => c.charCodeAt(0));
+        return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, sig, new TextEncoder().encode(code));
+    }
+
+    async function checkForUpdate() {
+        if (!settings().autoUpdate) {
+            return;
+        }
+        try {
+            const release = await (await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`)).json();
+            const version = String(release.tag_name || '').replace(/^v/, '');
+            if (!/^\d+\.\d+\.\d+$/.test(version) || !newerVersion(version, VERSION)) {
+                return;
+            }
+            let staged = null;
+            try {
+                staged = JSON.parse(localStorage.getItem(UPDATE_KEY) || 'null');
+            } catch {}
+            if (staged?.version !== version) {
+                const raw = `https://raw.githubusercontent.com/${UPDATE_REPO}/v${version}/`;
+                const get = async (file) => {
+                    const res = await fetch(raw + file, { cache: 'no-store' });
+                    if (!res.ok) {
+                        throw new Error(`${file}: ${res.status}`);
+                    }
+                    return res.text();
+                };
+                const [code, signature] = await Promise.all([get('bot-blocker.js'), get('bot-blocker.js.sig')]);
+                if (!code.includes(`const VERSION = '${version}';`) || !(await signedRelease(code, signature))) {
+                    console.warn(TAG, `update ${version} isn't signed by the release key, skipped`);
+                    return;
+                }
+                localStorage.setItem(UPDATE_KEY, JSON.stringify({ version, code }));
+                console.info(TAG, `update ${version} downloaded, runs from the next start`);
+            }
+            showUpdateNotice(version);
+        } catch (err) {
+            console.warn(TAG, 'update check failed', String(err));
+        }
+    }
+
+    function showUpdateNotice(version) {
+        if (updateShown || !document.body) {
+            return;
+        }
+        updateShown = true;
+        addStyles();
+        const notice = document.createElement('div');
+        notice.className = 'bb-toast';
+        notice.setAttribute('role', 'status');
+        notice.innerHTML = `<span>Bot Blocker ${esc(version)} is ready. Restart VRCX to update.</span>
+            <button class="bb-btn" data-act="restart">Restart</button>
+            <button class="bb-btn bb-ghost" data-act="close" title="Close"><i class="ri-close-line"></i></button>`;
+        notice.querySelector('[data-act="restart"]').onclick = () =>
+            window.electron?.restartApp ? window.electron.restartApp() : AppApi.RestartApplication(false);
+        notice.querySelector('[data-act="close"]').onclick = () => notice.remove();
+        document.body.appendChild(notice);
+    }
+
+    function startUpdates() {
+        setTimeout(checkForUpdate, 2 * 60_000);
+        setInterval(checkForUpdate, UPDATE_EVERY_MS);
+    }
+
     function installHooks() {
         const service = window.gameLogService;
         if (!service?.parseRawGameLog || !window.request?.playerModerationRequest || !window.request?.groupRequest) {
@@ -1295,6 +1428,7 @@
         service.parseRawGameLog = wrapped;
         watchUnblocks(window.request.playerModerationRequest);
         startShared();
+        startUpdates();
         console.info(TAG, 'watching joins', DRY_RUN ? '(dry run)' : '', `- ${groups().length} blocked group(s)`);
         return true;
     }
@@ -1354,6 +1488,7 @@
         addGroup: async (input) => addGroup(await resolveGroup(input)),
         removeGroup,
         open: openPanel,
+        checkForUpdate,
         hasDefaultName
     };
 })();

@@ -16,6 +16,10 @@ cd "$(dirname "$0")"
 
 version=${VERSION:-$(tr -d "[:space:]" < VERSION)}
 version=${version#v}
+if ! grep -q "^    const VERSION = '$version';" bot-blocker.js; then
+    echo "bot-blocker.js says another version than $version; release with ./release.sh" >&2
+    exit 1
+fi
 mkdir -p dist
 cp bot-blocker.js dist/bot-blocker.js
 

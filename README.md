@@ -25,7 +25,9 @@ The installers aren't signed, so the first time your system may warn about them:
 - **macOS:** macOS says it can't verify the developer. Open **System Settings > Privacy &
   Security**, scroll down and click **Open Anyway**.
 
-To update, install the newer version over the old one.
+Bot Blocker updates itself. It checks GitHub for new versions, and a new version runs from the
+next time VRCX starts. To update by hand instead, switch off **Update automatically** on the Bot
+Blocker page and install the newer version over the old one.
 
 ### Installing by hand
 
@@ -111,7 +113,7 @@ blocks**, and a person reviews those by hand before anyone else blocks them.
 Every plugin then blocks the listed accounts too: a few a minute, each looked up first, never a
 friend, and only the ones your own rules would block. Changes reach every running plugin within
 seconds. If a player is taken off the list, the blocks that came from the list are undone again;
-your own blocks stay.
+your own blocks stay. Accounts that no longer exist on VRChat are taken off the list.
 
 It's on by default. Uncheck it in the installer, or switch off **Use the shared blocklist** on the
 Bot Blocker page. Off means nothing is sent and nothing is fetched.
@@ -121,7 +123,7 @@ earlier are sent once as well, a few at a time.
 
 What leaves your computer: the blocked player's ID and display name, what the plugin saw (default
 name, Robot avatar, Visitor rank, account age, a word from the bio), which of your rules caught
-them, and a random ID this install made up for itself. Nothing about you or your VRChat account.
+them, and a random ID this install made up for itself.
 The bot blocker doesn't store your address: it only counts requests per address in memory, for
 a rate limit, and forgets them within the hour. Like any website, the web server in front of it
 keeps standard access logs (which include addresses) for 30 days, and uses them to block abusive
@@ -176,8 +178,9 @@ in VRCX's log at startup - please open an issue.
 
 `./build.sh` builds into `dist/` whatever the machine can: the Windows setup and the Linux
 installer on Linux or WSL (needs `gcc-mingw-w64-x86-64`, `nsis`, `librsvg2-bin`, `imagemagick`),
-the macOS package on a Mac. Pushing a version tag (`v1.2.3`) makes GitHub Actions build all of
-them and publish the release.
+the macOS package on a Mac. `./release.sh 1.2.3` sets the version, signs the plugin with the
+release key (the updater only runs signed versions), and pushes the tag; GitHub Actions then
+builds all of them and publishes the release.
 
 ## License
 

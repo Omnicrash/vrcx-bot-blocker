@@ -76,7 +76,7 @@ elif [ -t 0 ]; then
     say "and reports the bots you block that pass the shared list's checks. The server checks every"
     say "report on VRChat itself before it is listed."
     say "Sent: the blocked player's ID and name, what they were caught on, and a random ID for this"
-    say "install. Nothing about you or your VRChat account. Switch it off later on the Bot Blocker page."
+    say "install. Switch it off later on the Bot Blocker page."
     printf 'Use and contribute to the shared blocklist? [Y/n] '
     read -r answer || answer=''
     case "$answer" in n* | N*) share=0 ;; esac
