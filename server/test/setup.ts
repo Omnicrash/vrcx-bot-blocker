@@ -57,3 +57,4 @@ process.env.VRC_USERNAME = 'botcheck@example.com'
 process.env.VRC_PASSWORD = 'pa:ss'
 process.env.VRC_TOTP_SECRET = SECRET
 process.env.VAPI_LIMIT_PER_INSTALL = '5'
+process.env.VAPI_REVIEW_TOKEN = 'review-test-token'

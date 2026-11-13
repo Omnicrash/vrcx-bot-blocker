@@ -7,7 +7,7 @@ import { db, schema, sqlite } from './db'
 import { DEFAULT_RULES, DEFAULT_WORDS, type Facts, type Grounds, factsOf, judge, type ServerRules, worthReporting } from './rules'
 import { getUser } from './vrchat'
 
-const { reports, entries, settings, checks, words } = schema
+const { reports, entries, settings, checks, words, whitelist, recommendations } = schema
 
 // Install ids and addresses are kept only as hashes.
 export const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 32)
@@ -92,8 +92,39 @@ export const streams = () => listeners.size
 // ---- the list ----------------------------------------------------------------------------------
 
 export function currentSeq(): number {
-    return db.select({ m: max(entries.seq) }).from(entries).get()?.m ?? 0
+    const e = db.select({ m: max(entries.seq) }).from(entries).get()?.m ?? 0
+    const w = db.select({ m: max(whitelist.seq) }).from(whitelist).get()?.m ?? 0
+    return Math.max(e, w)
 }
+
+const isWhitelisted = (userId: string) => !!db.select().from(whitelist).where(eq(whitelist.hash, hash(userId))).get()
+
+// Clears a player as a real person: off the list for every plugin, and everything stored about
+// them deleted. Only the hash stays, so later reports about them are dropped on arrival.
+export function whitelistPlayer(userId: string) {
+    sqlite.transaction(() => {
+        // Numbered before the entry goes: if it held the highest number, plugins that already
+        // synced past it would otherwise never hear about the whitelisting.
+        const seq = currentSeq() + 1
+        db.delete(entries).where(eq(entries.userId, userId)).run()
+        db.delete(reports).where(eq(reports.userId, userId)).run()
+        db.delete(checks).where(eq(checks.userId, userId)).run()
+        db.delete(recommendations).where(eq(recommendations.key, `group:${userId}`)).run()
+        db.insert(whitelist).values({ hash: hash(userId), seq, at: Date.now() }).onConflictDoUpdate({ target: whitelist.hash, set: { seq } }).run()
+    })()
+    changed()
+}
+
+export const whitelistCount = () => db.select({ n: count() }).from(whitelist).get()?.n ?? 0
+
+export function recommend(key: string, verdict: 'approve' | 'reject', reasoning: string) {
+    db.insert(recommendations)
+        .values({ key, verdict, reasoning: reasoning.slice(0, 2000), at: Date.now() })
+        .onConflictDoUpdate({ target: recommendations.key, set: { verdict, reasoning: reasoning.slice(0, 2000), at: Date.now() } })
+        .run()
+}
+export const recommendationFor = (key: string) => db.select().from(recommendations).where(eq(recommendations.key, key)).get()
+export const dropRecommendation = (key: string) => db.delete(recommendations).where(eq(recommendations.key, key)).run()
 
 function putOnList(userId: string, displayName: string, grounds: Grounds) {
     const seq = currentSeq() + 1
@@ -187,9 +218,12 @@ export function reevaluate() {
 
 // ---- reports -----------------------------------------------------------------------------------
 
-export type Received = 'queued' | 'review' | 'known' | 'below minimum'
+export type Received = 'queued' | 'review' | 'known' | 'below minimum' | 'whitelisted'
 
 export function receive(r: { userId: string; displayName: string; grounds: Grounds; caughtBy?: unknown; install: string; ip: string }): Received {
+    if (isWhitelisted(r.userId)) {
+        return 'whitelisted' // cleared as a real person: not stored at all
+    }
     const forReview = !!r.grounds.group
     const worth = forReview || worthReporting(r.grounds, serverRules())
     const known = !forReview && !!checkOf(r.userId)
@@ -305,14 +339,20 @@ export function startBackground() {
 
 // ---- for plugins and the management page ------------------------------------------------------
 
+// Everything changed after `since`: added and removed players, and whitelisted ones (as hashes,
+// so the plugins can find them among their own blocks without the server sending a name).
 export function changesSince(since: number, limit: number) {
     const rows = db.select().from(entries).where(gt(entries.seq, since)).orderBy(asc(entries.seq)).limit(limit + 1).all()
     const page = rows.slice(0, limit)
+    const more = rows.length > limit
+    const upTo = more ? page.at(-1)!.seq : Number.MAX_SAFE_INTEGER
+    const cleared = db.select().from(whitelist).where(and(gt(whitelist.seq, since), lt(whitelist.seq, upTo + 1))).all()
     return {
-        seq: page.at(-1)?.seq ?? since,
-        more: rows.length > limit,
+        seq: Math.max(since, page.at(-1)?.seq ?? 0, ...cleared.map((w) => w.seq)),
+        more,
         added: page.filter((e) => !e.removed).map((e) => ({ userId: e.userId, displayName: e.displayName, grounds: e.grounds })),
-        removed: page.filter((e) => e.removed).map((e) => e.userId)
+        removed: page.filter((e) => e.removed).map((e) => e.userId),
+        whitelisted: cleared.map((w) => w.hash)
     }
 }
 
@@ -369,3 +409,40 @@ export function decideGroup(userId: string, approve: boolean) {
 }
 
 export const allEntries = (limit = 500) => db.select().from(entries).orderBy(desc(entries.seq)).limit(limit).all()
+
+// ---- the daily review --------------------------------------------------------------------------
+
+const lastReviewAt = () => (db.select().from(settings).where(eq(settings.key, 'lastReviewAt')).get()?.value as number | undefined) ?? 0
+
+export function markReviewed() {
+    const now = Date.now()
+    db.insert(settings).values({ key: 'lastReviewAt', value: now }).onConflictDoUpdate({ target: settings.key, set: { value: now } }).run()
+    return now
+}
+
+// What the daily review looks at: players listed since the last review with what the server saw of
+// them, group reports waiting for a person, and words nobody decided yet with the profile texts
+// they were found in.
+export function reviewItems() {
+    const since = lastReviewAt()
+    const listed = db
+        .select()
+        .from(entries)
+        .innerJoin(checks, eq(checks.userId, entries.userId))
+        .where(and(eq(entries.removed, false), gt(entries.addedAt, since)))
+        .all()
+        .map(({ entries: e, checks: c }) => ({ userId: e.userId, displayName: e.displayName, grounds: e.grounds, addedAt: e.addedAt, seen: c.facts, firstSeenAt: c.firstCheckedAt }))
+    const groups = reviewQueue().map((g) => ({ ...g, recommendation: recommendationFor(`group:${g.userId}`) ?? null }))
+    const pending = wordsByStatus().pending.map((w) => {
+        const ids = db
+            .selectDistinct({ id: reports.userId })
+            .from(reports)
+            .where(sql`json_extract(${reports.grounds}, '$.bio') = ${w.word}`)
+            .limit(5)
+            .all()
+            .map((r) => r.id)
+        const texts = ids.map((id) => (checkOf(id)?.facts as Facts | undefined)?.text).filter((t): t is string => !!t)
+        return { ...w, examples: texts.map((t) => t.slice(0, 500)), recommendation: recommendationFor(`word:${w.word}`) ?? null }
+    })
+    return { since, rules: serverRules(), approvedWords: approvedWords(), listed, groups, words: pending }
+}

@@ -7,10 +7,18 @@ import { Hono } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { html } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
-import { adminPasswordHash } from './config'
+import { timingSafeEqual } from 'node:crypto'
+import { adminPasswordHash, reviewToken } from './config'
 import {
     allEntries,
     approvedWords,
+    dropRecommendation,
+    recommend,
+    recommendationFor,
+    reviewItems,
+    markReviewed,
+    whitelistCount,
+    whitelistPlayer,
     counts,
     decideGroup,
     preview,
@@ -58,6 +66,8 @@ const groundsText = (g: Grounds) =>
               .filter(Boolean)
               .join(', ')
 const when = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
+const recBox = (r: { verdict: string; reasoning: string } | undefined) =>
+    r ? html`<div class="muted" style="margin-bottom:4px">Review suggests <b>${r.verdict}</b>: ${r.reasoning}</div>` : ''
 const vrcUser = (id: string, name: string) => html`<a href="https://vrchat.com/home/user/${id}" target="_blank">${name}</a>`
 
 function page(title: string, body: HtmlEscapedString | Promise<HtmlEscapedString>) {
@@ -87,7 +97,7 @@ export const admin = new Hono()
 
 // Requests made by another site (a page opened anywhere on the LAN posting a form here) are refused.
 admin.use('*', async (c, next) => {
-    if (c.req.method !== 'GET') {
+    if (c.req.method !== 'GET' && !c.req.path.startsWith('/api/')) {
         const site = c.req.header('sec-fetch-site')
         const origin = c.req.header('origin')
         const host = c.req.header('host')
@@ -101,6 +111,15 @@ admin.use('*', async (c, next) => {
 // Everything but the login itself wants a session.
 admin.use('*', async (c, next) => {
     if (c.req.path === '/login') {
+        return next()
+    }
+    // The daily review signs in with its own token instead of a session.
+    if (c.req.path.startsWith('/api/')) {
+        const sent = Buffer.from((c.req.header('authorization') ?? '').replace(/^Bearer /, ''))
+        const token = Buffer.from(reviewToken())
+        if (!token.length || sent.length !== token.length || !timingSafeEqual(sent, token)) {
+            return c.json({ error: 'unauthorized' }, 401)
+        }
         return next()
     }
     const token = getCookie(c, COOKIE)
@@ -207,6 +226,7 @@ admin.get('/', (c) => {
                           <tr><th>Reported, not decided</th><th>Reports</th><th></th></tr>
                           ${w.pending.map(
                               (p) => html`<tr><td>${p.word}</td><td>${p.reports}</td><td>
+                                  ${recBox(recommendationFor(`word:${p.word}`))}
                                   <form class="inline" method="post" action="/words/approve/preview"><input type="hidden" name="word" value="${p.word}" /><button class="ok">Approve</button></form>
                                   <form class="inline" method="post" action="/words/reject"><input type="hidden" name="word" value="${p.word}" /><button class="no">Reject</button></form>
                               </td></tr>`
@@ -227,8 +247,10 @@ admin.get('/', (c) => {
                                   <td>${q.reporters}</td>
                                   <td class="muted">${when(q.firstAt)}</td>
                                   <td>
+                                      ${recBox(recommendationFor(`group:${q.userId}`))}
                                       <form class="inline" method="post" action="/review/${q.userId}/approve"><button class="ok">Approve</button></form>
                                       <form class="inline" method="post" action="/review/${q.userId}/reject"><button class="no">Reject</button></form>
+                                      <form class="inline" method="post" action="/whitelist/${q.userId}"><button>Whitelist</button></form>
                                   </td>
                               </tr>`
                           )}
@@ -244,11 +266,19 @@ admin.get('/', (c) => {
                                   <td>${vrcUser(e.userId, e.displayName)}</td>
                                   <td class="muted">${groundsText(e.grounds as Grounds)}</td>
                                   <td class="muted">${when(e.addedAt)}</td>
-                                  <td><form class="inline" method="post" action="/remove/${e.userId}"><button class="no">Remove</button></form></td>
+                                  <td>
+                                      <form class="inline" method="post" action="/remove/${e.userId}"><button class="no">Remove</button></form>
+                                      <form class="inline" method="post" action="/whitelist/${e.userId}"><button>Whitelist</button></form>
+                                  </td>
                               </tr>`
                           )}
                       </table>`
                     : html`<div class="muted">Empty.</div>`}
+
+                <h2>Whitelist (${whitelistCount()})</h2>
+                <form method="post" action="/whitelist">
+                    <input type="text" name="user" placeholder="Profile link or usr_ id" style="width:380px" /> <button>Whitelist and delete their data</button>
+                </form>
 
                 ${byHand.length
                     ? html`<h2>Removed by hand</h2>
@@ -350,6 +380,70 @@ admin.post('/remove/:userId', (c) => {
 admin.post('/restore/:userId', (c) => {
     restore(c.req.param('userId'))
     return c.redirect('/')
+})
+
+// ---- the daily review's API (token, see reviewToken) --------------------------------------------
+
+admin.get('/api/review', (c) => c.json(reviewItems()))
+
+admin.post('/api/whitelist', async (c) => {
+    const { userId } = (await c.req.json().catch(() => ({}))) as { userId?: string }
+    if (!userId || !/^usr_[0-9a-f-]{36}$/.test(userId)) {
+        return c.json({ error: 'bad user id' }, 400)
+    }
+    whitelistPlayer(userId)
+    return c.json({ ok: true })
+})
+
+// A group report or a word: decided (`decide: true`, only for the clear cases the review
+// instructions allow) or left as a recommendation for a person.
+admin.post('/api/groups/:userId', async (c) => {
+    const { verdict, reasoning, decide } = (await c.req.json().catch(() => ({}))) as { verdict?: string; reasoning?: string; decide?: boolean }
+    if (verdict !== 'approve' && verdict !== 'reject') {
+        return c.json({ error: 'verdict must be approve or reject' }, 400)
+    }
+    const userId = c.req.param('userId')
+    if (decide) {
+        decideGroup(userId, verdict === 'approve')
+        dropRecommendation(`group:${userId}`)
+    } else {
+        recommend(`group:${userId}`, verdict, reasoning ?? '')
+    }
+    return c.json({ ok: true })
+})
+
+admin.post('/api/words', async (c) => {
+    const { word, verdict, reasoning, decide } = (await c.req.json().catch(() => ({}))) as { word?: string; verdict?: string; reasoning?: string; decide?: boolean }
+    if (!word || (verdict !== 'approve' && verdict !== 'reject')) {
+        return c.json({ error: 'word and verdict (approve or reject) needed' }, 400)
+    }
+    if (decide) {
+        setWord(word, verdict === 'approve' ? 'approved' : 'rejected')
+        dropRecommendation(`word:${word}`)
+        const { added } = verdict === 'approve' ? reevaluate() : { added: 0 }
+        return c.json({ ok: true, added })
+    }
+    recommend(`word:${word}`, verdict, reasoning ?? '')
+    return c.json({ ok: true })
+})
+
+admin.post('/api/review/done', (c) => c.json({ reviewedAt: markReviewed() }))
+
+// ---- whitelisting from the page --------------------------------------------------------------
+
+admin.post('/whitelist', async (c) => {
+    const raw = String((await c.req.parseBody()).user ?? '')
+    const userId = /usr_[0-9a-f-]{36}/.exec(raw)?.[0]
+    if (!userId) {
+        return c.redirect(`/?done=${encodeURIComponent('No user id found in that.')}`)
+    }
+    whitelistPlayer(userId)
+    return c.redirect(`/?done=${encodeURIComponent('Whitelisted, and everything stored about them deleted.')}`)
+})
+
+admin.post('/whitelist/:userId', (c) => {
+    whitelistPlayer(c.req.param('userId'))
+    return c.redirect(`/?done=${encodeURIComponent('Whitelisted, and everything stored about them deleted.')}`)
 })
 
 // For tests: sign in without the form.

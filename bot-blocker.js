@@ -86,6 +86,9 @@
         // Also sync group blocks: send this user's group blocks for manual review on the server, and
         // block other users' group blocks once a person approved them there.
         syncGroups: false,
+        // When the shared list clears someone as a real player: undo every block Bot Blocker made
+        // on them. Off: only the blocks that came from the list or that this install reported.
+        unblockCleared: true,
         ageDays: 7,
         bioWords: ['hexed.cc'], // keywords and websites the bio rule looks for
         // The checked rules without "always" block once at least this many of them fit. The
@@ -258,6 +261,9 @@
 
         checking.add(userId);
         try {
+            if (await isCleared(userId)) {
+                return; // the shared list cleared them as a real player
+            }
             // Asked again once it's this player's turn: the replay has finished by then, so
             // someone who already left is skipped instead of looked up.
             const user = await queued(() => (fromLogOnly || present.has(userId) ? getUser(userId) : null));
@@ -371,6 +377,15 @@
     const SHARED_SEQ_KEY = 'botBlocker.sharedSeq';
     const SHARED_BLOCKS_KEY = 'botBlocker.sharedBlocks'; // blocks that came from the list
     const SERVER_RULES_KEY = 'botBlocker.serverRules';
+    const REPORTED_KEY = 'botBlocker.reported'; // players this install reported to the list
+    const CLEARED_KEY = 'botBlocker.cleared'; // hashes of players the list cleared as real people
+
+    // The server names whitelisted players only by this hash of their user id.
+    async function idHash(userId) {
+        const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId)));
+        return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+    }
+    const isCleared = async (userId) => loadList(CLEARED_KEY).includes(await idHash(userId));
     let unblockQuietly = null; // VRCX's own unblock, without our never-block-again hook
 
     function installId() {
@@ -420,6 +435,7 @@
         if (!settings().share || !(grounds.group || worthReporting(grounds))) {
             return;
         }
+        saveList(REPORTED_KEY, [...new Set([...loadList(REPORTED_KEY), userId])].slice(-5000));
         const outbox = loadList(OUTBOX_KEY);
         outbox.push({ userId, displayName, grounds, caughtBy });
         saveList(OUTBOX_KEY, outbox.slice(-3000));
@@ -503,6 +519,9 @@
                     delete list[id];
                     dropped.push(id);
                 }
+                if (body.whitelisted?.length) {
+                    await applyWhitelist(body.whitelisted, list);
+                }
                 since = body.seq;
                 localStorage.setItem(SHARED_KEY, JSON.stringify(list));
                 localStorage.setItem(SHARED_SEQ_KEY, String(since));
@@ -538,6 +557,35 @@
             } catch {}
         }
         saveList(SHARED_BLOCKS_KEY, [...fromList]);
+    }
+
+    // The list cleared these players as real people (by hash). They leave the local copy, their
+    // blocks are undone as the user chose, and this install's own rules leave them alone from now
+    // on. Blocks the user made by hand aren't Bot Blocker's and are never touched.
+    async function applyWhitelist(hashes, list) {
+        const cleared = new Set([...loadList(CLEARED_KEY), ...hashes]);
+        saveList(CLEARED_KEY, [...cleared]);
+        const ours = new Set(loadBlocked().map((b) => b.userId)); // every block Bot Blocker made
+        const tied = new Set([...loadList(SHARED_BLOCKS_KEY), ...loadList(REPORTED_KEY)]); // tied to the list
+        const candidates = new Set([...ours, ...tied, ...Object.keys(list)]);
+        const undo = [];
+        for (const userId of candidates) {
+            if (!hashes.includes(await idHash(userId))) {
+                continue;
+            }
+            delete list[userId];
+            handled.add(userId); // never blocked again by this install
+            if (settings().unblockCleared ? ours.has(userId) : tied.has(userId)) {
+                undo.push(userId);
+            }
+        }
+        for (const userId of undo) {
+            try {
+                await unblockQuietly?.({ moderated: userId, type: 'block' });
+                console.info(TAG, 'unblocked, cleared by the shared list:', userId);
+            } catch {}
+        }
+        saveList(SHARED_BLOCKS_KEY, loadList(SHARED_BLOCKS_KEY).filter((id) => !undo.includes(id)));
     }
 
     // Whether this user's own rules would block an account with these grounds.
@@ -963,6 +1011,9 @@
                 <div class="bb-rule"><label>
                     <input type="checkbox" data-act="sync-groups" ${s.syncGroups ? 'checked' : ''} ${s.share ? '' : 'disabled'} />
                     <span>Also sync group blocks</span></label></div>
+                <div class="bb-rule"><label title="When the shared list clears someone as a real player, undo any block Bot Blocker made on them.">
+                    <input type="checkbox" data-act="unblock-cleared" ${s.unblockCleared ? 'checked' : ''} ${s.share ? '' : 'disabled'} />
+                    <span>Unblock players the shared list clears</span></label></div>
                 </section>
                 <section>
                 <h3>Recently blocked</h3>
@@ -998,6 +1049,7 @@
             renderPanel();
         };
         panel.querySelector('[data-act="sync-groups"]').onchange = (e) => setSyncGroups(e.target.checked);
+        panel.querySelector('[data-act="unblock-cleared"]').onchange = (e) => saveSettings({ ...settings(), unblockCleared: e.target.checked });
         panel.querySelectorAll('[data-word]').forEach((btn) => {
             btn.onclick = () => {
                 setBioWords(settings().bioWords.filter((w) => w !== btn.dataset.word));

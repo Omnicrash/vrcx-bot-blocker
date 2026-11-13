@@ -38,6 +38,24 @@ export const words = sqliteTable('words', {
     firstAt: integer('first_at').notNull()
 })
 
+// Players cleared as real people (by hand or by the daily review). Only a hash of the user id is
+// kept: everything else about them is deleted, and new reports about them are dropped unread.
+// `seq` shares the list's counter, so plugins hear about a whitelisting with the list changes.
+export const whitelist = sqliteTable('whitelist', {
+    hash: text('hash').primaryKey(),
+    seq: integer('seq').notNull(),
+    at: integer('at').notNull()
+})
+
+// The daily review's suggestions for what a person still has to decide: a group report or a
+// word, with its reasoning. Shown on the management page until decided.
+export const recommendations = sqliteTable('recommendations', {
+    key: text('key').primaryKey(), // 'group:<user id>' or 'word:<word>'
+    verdict: text('verdict').notNull(), // 'approve' | 'reject'
+    reasoning: text('reasoning').notNull(),
+    at: integer('at').notNull()
+})
+
 // Settings changed on the management page, one JSON value per key ('rules').
 export const settings = sqliteTable('settings', {
     key: text('key').primaryKey(),

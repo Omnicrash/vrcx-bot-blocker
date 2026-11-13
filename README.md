@@ -128,6 +128,20 @@ good, so it can apply changed rules to the whole list again.
 When the server can't be reached, nothing changes for you: blocking works as before, reports
 wait, and syncing picks up again by itself.
 
+## Privacy
+
+The shared list exists to stop spam, scraping and harassment bots in VRChat. To do that, the
+server stores the reports plugins send and what it saw when it looked the reported players up on
+VRChat: their account ID, display name, profile text, trust rank, account age and whether they
+wore the Robot avatar. It keeps this for as long as the list exists, so changed rules can be
+applied to everyone again. Reporters are stored only as scrambled hashes.
+
+A daily review looks at newly listed players. Anyone who turns out to be a real person is
+**whitelisted**: taken off the list for every user, their blocks from the list undone, and
+everything stored about them deleted; only a scrambled hash of their ID stays, so they're never
+listed again. You can ask for the same yourself: open an issue on this repository with your
+VRChat profile link, and you'll be whitelisted and your data deleted.
+
 ## Options
 
 Near the top of the bot blocker section in `custom.js`:

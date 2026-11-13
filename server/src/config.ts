@@ -13,6 +13,20 @@ export const ADMIN_PORT = Number(env.VAPI_ADMIN_PORT ?? 3061)
 // container settings), read at every sign-in so a new password needs no restart.
 // VAPI_ADMIN_PASSWORD_HASH wins when set, for tests and local runs.
 const ADMIN_HASH_FILE = env.VAPI_ADMIN_HASH_FILE ?? './data/admin.hash'
+// The daily review's token for /api on the management port: VAPI_REVIEW_TOKEN, else review.token
+// next to the database. Without one the review API lets nobody in.
+const REVIEW_TOKEN_FILE = env.VAPI_REVIEW_TOKEN_FILE ?? './data/review.token'
+export function reviewToken(): string {
+    if (env.VAPI_REVIEW_TOKEN) {
+        return env.VAPI_REVIEW_TOKEN
+    }
+    try {
+        return readFileSync(REVIEW_TOKEN_FILE, 'utf8').trim()
+    } catch {
+        return ''
+    }
+}
+
 export function adminPasswordHash(): string {
     if (env.VAPI_ADMIN_PASSWORD_HASH) {
         return env.VAPI_ADMIN_PASSWORD_HASH

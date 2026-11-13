@@ -23,6 +23,13 @@ any address that isn't private, refuses forms posted from other sites, and wants
 password's hash is `admin.hash` in the data folder (`bun -e 'console.log(await Bun.password.hash("…"))'`),
 read at every sign-in; with no hash nobody gets in.
 
+## Daily review
+
+The ClaudeResponder runs `server/review/INSTRUCTIONS.md` once a day against `/api` on the
+management port, with the token in `review.token` next to the database (only the container user
+can read it). It whitelists real people, decides clear group reports and words, and leaves
+recommendations on the management page for the rest.
+
 ## One-time setup
 
 - **Data:** `/mnt/user/appdata/vrcx-bot-blocker`, owned by `1002:100` (the container's user).
