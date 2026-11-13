@@ -7,7 +7,7 @@ import { Hono } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { html } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
-import { ADMIN_PASSWORD_HASH } from './config'
+import { adminPasswordHash } from './config'
 import {
     allEntries,
     approvedWords,
@@ -114,13 +114,13 @@ admin.get('/login', (c) =>
     c.html(
         page(
             'Bot Blocker - sign in',
-            ADMIN_PASSWORD_HASH
+            adminPasswordHash()
                 ? html`<h1>Bot Blocker</h1>
                       <form method="post" action="/login">
                           <input type="password" name="password" autofocus /> <button class="ok">Sign in</button>
                       </form>`
                 : html`<h1>Bot Blocker</h1>
-                      <p class="warn">No password set: VAPI_ADMIN_PASSWORD_HASH is empty, so nobody can sign in.</p>`
+                      <p class="warn">No password set yet (admin.hash in the data folder), so nobody can sign in.</p>`
         )
     )
 )
@@ -130,7 +130,8 @@ admin.post('/login', async (c) => {
     while (loginTries.length && loginTries[0]! < now - 60_000) loginTries.shift()
     loginTries.push(now)
     const password = String((await c.req.parseBody()).password ?? '')
-    const ok = loginTries.length <= 5 && !!ADMIN_PASSWORD_HASH && (await Bun.password.verify(password, ADMIN_PASSWORD_HASH).catch(() => false))
+    const hash = adminPasswordHash()
+    const ok = loginTries.length <= 5 && !!hash && (await Bun.password.verify(password, hash).catch(() => false))
     if (!ok) {
         return c.redirect('/login')
     }
