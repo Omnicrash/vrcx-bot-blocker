@@ -3,6 +3,7 @@
 #
 #   sh vrcx-bot-blocker-linux.sh              install or update
 #   sh vrcx-bot-blocker-linux.sh --uninstall  take it out again
+#   sh vrcx-bot-blocker-linux.sh --no-share   install without the shared blocklist
 #
 # Adds the plugin to VRCX's custom.js (anything else in that file stays as it was) and restarts
 # VRCX when it runs, so the change takes effect right away. No root needed.
@@ -67,7 +68,16 @@ cat > "$plugin" <<'BOT_BLOCKER_PLUGIN_EOF'
 @PLUGIN@
 BOT_BLOCKER_PLUGIN_EOF
 
-bb_install "$target" "$plugin"
+share=1
+if [ "${1:-}" = "--no-share" ]; then
+    share=0
+elif [ -t 0 ]; then
+    printf 'Use and contribute to the shared blocklist? [Y/n] '
+    read -r answer || answer=''
+    case "$answer" in n* | N*) share=0 ;; esac
+fi
+
+bb_install "$target" "$plugin" "$share"
 say "VRCX Bot Blocker $VERSION is installed in $target"
 restart_vrcx
 say "Done. To remove it later: sh $(basename "$0") --uninstall"

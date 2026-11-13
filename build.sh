@@ -71,6 +71,11 @@ build_macos() {
     fill installer/macos/distribution.xml "$stage/distribution.xml"
     pkgbuild --nopayload --scripts "$stage/scripts" --identifier net.omnicrash.vrcx-bot-blocker \
         --version "$version" "$stage/component.pkg"
+    mkdir -p "$stage/share-scripts"
+    cp installer/macos/share-postinstall "$stage/share-scripts/postinstall"
+    chmod +x "$stage/share-scripts/postinstall"
+    pkgbuild --nopayload --scripts "$stage/share-scripts" --identifier net.omnicrash.vrcx-bot-blocker.share \
+        --version "$version" "$stage/share.pkg"
     local out="dist/VRCX-Bot-Blocker-$version-macos.pkg"
     productbuild --distribution "$stage/distribution.xml" --resources "$stage/resources" \
         --package-path "$stage" "$out"

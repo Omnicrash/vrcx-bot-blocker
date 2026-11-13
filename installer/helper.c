@@ -2,7 +2,9 @@
 // NSIS's own text functions, which would round-trip other people's UTF-8 through the ANSI code
 // page. Everything here works on raw bytes.
 //
-//   botblocker-helper install <custom.js> <bot-blocker.js>   add or replace our block
+//   botblocker-helper install <custom.js> <bot-blocker.js> [share=0|1]
+//                                                           add or replace our block; share is the
+//                                                           installer's shared-blocklist checkbox
 //   botblocker-helper uninstall <custom.js>                  take our block out again
 //   botblocker-helper running                                exit 0 when VRCX runs, 1 when not
 //   botblocker-helper restart                                close VRCX and start it again
@@ -96,7 +98,34 @@ static int backup(const wchar_t *path)
     return CopyFileW(path, bak, FALSE);
 }
 
-static int install(const wchar_t *target, const wchar_t *plugin)
+// Appends the plugin to out, rewriting the two lines the installer owns: the shared-blocklist
+// choice and the install stamp the plugin uses to notice a fresh install.
+static size_t put_plugin(char *out, const Buf *js, int share, unsigned long long stamp)
+{
+    size_t n = 0;
+    const char *p = js->data, *end = js->data + js->len;
+    while (p < end) {
+        const char *nl = memchr(p, '\n', end - p);
+        const char *stop = nl ? nl : end;
+        char line[256];
+        size_t len = stop - p;
+        if (len < sizeof line && (memcpy(line, p, len), line[len] = 0, strstr(line, "@SHARE_DEFAULT@"))) {
+            n += sprintf(out + n, "    const SHARE_DEFAULT = %s; // @SHARE_DEFAULT@", share ? "true" : "false");
+        } else if (len < sizeof line && strstr(line, "@INSTALL_STAMP@")) {
+            n += sprintf(out + n, "    const INSTALL_STAMP = '%llu'; // @INSTALL_STAMP@", stamp);
+        } else {
+            memcpy(out + n, p, len);
+            n += len;
+        }
+        if (nl) {
+            out[n++] = '\n';
+        }
+        p = nl ? nl + 1 : end;
+    }
+    return n;
+}
+
+static int install(const wchar_t *target, const wchar_t *plugin, int share)
 {
     Buf js, cur;
     if (!read_file(plugin, &js)) {
@@ -114,7 +143,7 @@ static int install(const wchar_t *target, const wchar_t *plugin)
         js.len--;
     }
 
-    size_t cap = cur.len + js.len + sizeof START + sizeof END + 16;
+    size_t cap = cur.len + js.len + sizeof START + sizeof END + 256;
     char *out = malloc(cap);
     size_t n = 0;
     if (!only_whitespace(&cur)) {
@@ -128,8 +157,10 @@ static int install(const wchar_t *target, const wchar_t *plugin)
         n += 4;
     }
     n += sprintf(out + n, "%s\r\n", START);
-    memcpy(out + n, js.data, js.len);
-    n += js.len;
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    unsigned long long stamp = (((unsigned long long)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000;
+    n += put_plugin(out + n, &js, share, stamp);
     n += sprintf(out + n, "\r\n%s\r\n", END);
 
     if (!write_file(target, out, n)) {
@@ -217,8 +248,8 @@ static int restart(void)
 
 int wmain(int argc, wchar_t **argv)
 {
-    if (argc == 4 && !wcscmp(argv[1], L"install")) {
-        return install(argv[2], argv[3]);
+    if ((argc == 4 || argc == 5) && !wcscmp(argv[1], L"install")) {
+        return install(argv[2], argv[3], argc == 4 || wcscmp(argv[4], L"share=0") != 0);
     }
     if (argc == 3 && !wcscmp(argv[1], L"uninstall")) {
         return uninstall(argv[2]);

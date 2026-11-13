@@ -69,7 +69,7 @@ The rules live on the **Bot Blocker** page in VRCX's side menu. Each one can be 
 | Default display name (a word, a space, then the last four characters of the account ID) | on |
 | Robot avatar | on |
 | Visitor rank | on |
-| Bio mentions hexed.cc (also written `hexed(.)cc`, `hexed dot cc` and so on) | on, always block |
+| Bio mentions a word or site from your list, hexed.cc to start (also written `hexed(.)cc`, `hexed dot cc` and so on). Reads the bio, its links, the pronouns and the status text | on, always block |
 | Nuisance rank | on, always block |
 | Almost Nuisance rank | off |
 | Account younger than a number of days (7 to start with) | off |
@@ -90,6 +90,30 @@ Changing a rule also checks everyone already in your instance.
 **Nobody is blocked twice.** The plugin remembers everyone it has blocked and never checks them
 again. So if you unblock someone it caught, in VRChat or in VRCX, they stay unblocked. It also
 notices when you unblock anyone in VRCX yourself, and leaves that person alone from then on.
+
+## Shared blocklist
+
+Every player your block rules catch is reported to a shared list at `vapi.omnicrash.net`,
+together with what they were caught on. Players blocked for being in one of your groups are only
+reported when you tick **Also report group blocks**, and blocks you make yourself never are. The server looks each one up on VRChat itself and lists them only
+when the grounds still hold: the default display name, the Robot avatar (seen through the
+profile picture), Visitor rank, a site in the bio or pronouns, or Nuisance rank. Reports have to
+meet at least the default rules. Every plugin then blocks the listed accounts too, a few per
+minute so VRChat isn't flooded, and only those your own rules would block. So most bots are
+already blocked before they ever reach your instance.
+
+It's on by default. Uncheck it in the installer, or switch off **Shared blocklist** on the Bot
+Blocker page. Off means nothing is sent and nothing is fetched.
+
+What leaves your computer: the blocked player's ID and display name, what they were caught on,
+and a random ID this install made up for itself, so the server can tell reports apart. Nothing
+about you or your VRChat account. The server keeps the install ID and your address only as
+scrambled hashes, for rate limits.
+
+When the server can't be reached, nothing changes for you: blocking works as before, reports
+wait, and syncing picks up again by itself.
+
+Group lists stay on your own computer.
 
 ## Options
 

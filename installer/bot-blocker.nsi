@@ -6,6 +6,8 @@
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "nsDialogs.nsh"
+!include "FileFunc.nsh"
 
 Name "VRCX Bot Blocker"
 OutFile "${OUT}"
@@ -35,13 +37,39 @@ VIAddVersionKey "LegalCopyright" "MIT License"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${SRC}/../LICENSE"
+Page custom SharePage SharePageLeave
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
+; The shared blocklist: on unless unchecked here (or /NOSHARE on a silent install).
+Var Share
+Var ShareBox
+Function SharePage
+    !insertmacro MUI_HEADER_TEXT "Shared blocklist" ""
+    nsDialogs::Create 1018
+    Pop $0
+    ${NSD_CreateCheckbox} 0 0 100% 12u "Use and contribute to the shared blocklist"
+    Pop $ShareBox
+    ${If} $Share == 1
+        ${NSD_Check} $ShareBox
+    ${EndIf}
+    nsDialogs::Show
+FunctionEnd
+Function SharePageLeave
+    ${NSD_GetState} $ShareBox $Share
+FunctionEnd
+
 Function .onInit
+    StrCpy $Share 1
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/NOSHARE" $1
+    ${IfNot} ${Errors}
+        StrCpy $Share 0
+    ${EndIf}
     ${IfNot} ${FileExists} "$APPDATA\VRCX\*.*"
         MessageBox MB_OK|MB_ICONSTOP "VRCX doesn't seem to be installed for this Windows user (there is no $APPDATA\VRCX folder).$\r$\n$\r$\nInstall VRCX and start it once, then run this setup again."
         Abort
@@ -70,7 +98,7 @@ Section "VRCX Bot Blocker" SecMain
     File "${DIST}/icon.ico"
 
     DetailPrint "Adding the plugin to VRCX..."
-    nsExec::ExecToLog '"$INSTDIR\botblocker-helper.exe" install "${CUSTOM_JS}" "$INSTDIR\bot-blocker.js"'
+    nsExec::ExecToLog '"$INSTDIR\botblocker-helper.exe" install "${CUSTOM_JS}" "$INSTDIR\bot-blocker.js" share=$Share'
     Pop $0
     ${If} $0 != 0
         MessageBox MB_OK|MB_ICONSTOP "Couldn't add the plugin to $APPDATA\VRCX\custom.js (code $0). Nothing was changed."

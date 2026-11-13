@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<!--
+  Unraid container template for the VRCX Bot Blocker API (server/deploy/README.md).
+  Installed as /boot/config/plugins/dockerMan/templates-user/my-VrcxBotBlocker.xml on xdisk, with
+  the VRChat login filled in there - it is never in git.
+-->
+<Container version="2">
+  <Name>VrcxBotBlocker</Name>
+  <Repository>ghcr.io/omnicrash/vrcx-bot-blocker-api:latest</Repository>
+  <Registry/>
+  <Project>https://github.com/Omnicrash/vrcx-bot-blocker</Project>
+  <Support/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Overview>
+    The shared blocklist for the VRCX Bot Blocker plugin: takes reports, re-checks them on VRChat
+    and hands the list to every plugin. Behind NPMplus as vapi.omnicrash.net, public.
+  </Overview>
+  <Category>Tools:</Category>
+  <WebUI/>
+  <Icon/>
+  <ExtraParams>--restart=unless-stopped --init --user 1002:100</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <Config Name="Port" Target="3060" Default="3060" Mode="tcp"
+          Description="The API, proxied by NPMplus." Type="Port" Display="always"
+          Required="true" Mask="false">3060</Config>
+
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/vrcx-bot-blocker" Mode="rw"
+          Description="The database (reports and the shared list) and the VRChat login cookie."
+          Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vrcx-bot-blocker</Config>
+
+  <Config Name="VRChat username" Target="VRC_USERNAME" Default="" Mode=""
+          Description="The VRChat account the server looks players up with."
+          Type="Variable" Display="always" Required="true" Mask="false">VRC_USERNAME_HERE</Config>
+
+  <Config Name="VRChat password" Target="VRC_PASSWORD" Default="" Mode=""
+          Description="That account's password."
+          Type="Variable" Display="always" Required="true" Mask="true">VRC_PASSWORD_HERE</Config>
+
+  <Config Name="VRChat authenticator secret" Target="VRC_TOTP_SECRET" Default="" Mode=""
+          Description="The account's two-factor secret key, so the server can log in on its own."
+          Type="Variable" Display="always" Required="true" Mask="true">VRC_TOTP_SECRET_HERE</Config>
+
+  <Config Name="Bio words" Target="VAPI_BIO_WORDS" Default="hexed.cc" Mode=""
+          Description="Comma-separated words and sites the server accepts as grounds."
+          Type="Variable" Display="advanced" Required="false" Mask="false">hexed.cc</Config>
+</Container>

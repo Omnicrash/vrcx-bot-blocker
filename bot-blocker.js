@@ -23,6 +23,12 @@
     const GROUPS_KEY = 'botBlocker.groups';
     const TAG = '[BotBlocker]';
     const LOOKUP_GAP_MS = 400; // between group lookups, to stay clear of VRChat's rate limits
+    const API = 'https://vapi.omnicrash.net/v1'; // the shared blocklist
+    // The installer's "shared blocklist" checkbox and when it ran; both lines are rewritten by it.
+    const SHARE_DEFAULT = true; // @SHARE_DEFAULT@
+    const INSTALL_STAMP = 'dev'; // @INSTALL_STAMP@
+    const SYNC_EVERY_MS = 10 * 60_000;
+    const SHARED_BLOCK_GAP_MS = 15_000; // listed accounts are blocked one at a time, this far apart
 
     const avatarByName = new Map(); // display name -> last avatar name seen in the log
     const present = new Map(); // user id -> display name, everyone in the instance right now
@@ -64,7 +70,7 @@
     // default name, the Robot avatar and Visitor rank: each of those alone catches real people.
     const SETTINGS_KEY = 'botBlocker.rules';
     const RULES = ['name', 'robot', 'visitor', 'bio', 'nuisance', 'probable', 'age'];
-    const FROM_LOG = ['name', 'robot']; // known from the game log, the rest needs the profile
+    const FROM_LOG = ['name']; // known from the game log alone; the rest needs the profile
     const RULE_LABELS = {
         name: 'default name',
         robot: 'Robot avatar',
@@ -76,6 +82,8 @@
     };
     const DEFAULT_SETTINGS = {
         excludeFriends: true,
+        share: SHARE_DEFAULT, // report blocks to the shared blocklist and block what's on it
+        reportGroups: false, // also report group blocks that meet the minimum; off: rule blocks only
         ageDays: 7,
         bioWords: ['hexed.cc'], // keywords and websites the bio rule looks for
         rules: {
@@ -117,6 +125,17 @@
         saveSettings(s);
     }
 
+    function setReportGroups(value) {
+        saveSettings({ ...settings(), reportGroups: !!value });
+    }
+
+    function setShare(value) {
+        saveSettings({ ...settings(), share: !!value });
+        if (value) {
+            syncShared();
+        }
+    }
+
     function setExcludeFriends(value) {
         saveSettings({ ...settings(), excludeFriends: !!value });
     }
@@ -146,11 +165,17 @@
         return new RegExp(isSite ? word.split('.').map(escapeRe).join(DOT) : escapeRe(word), 'i');
     }
 
-    // The first word from the list the bio (or its links) mentions, or null.
+    // The first word from the list the profile's free text mentions, or null. The bots advertise
+    // in their pronouns as much as in the bio, so every field a player writes is read.
     function bioMention(user, words) {
-        const text = [user.bio || '', ...(user.bioLinks || [])].join(' ');
+        const text = [user.bio || '', ...(user.bioLinks || []), user.pronouns || '', user.statusDescription || ''].join(' ');
         return words.find((w) => wordPattern(w).test(text)) || null;
     }
+
+    // The default Robot avatar's picture. Without a VRChat+ icon of their own, a player's profile
+    // icon is their current avatar's thumbnail: a second way to see the Robot when the log missed it.
+    const ROBOT_ICON = 'file_0e8c4e32-7444-44ea-ade4-313c010d4bae';
+    const wearsRobot = (user) => (user.iconUrl || '').includes(ROBOT_ICON);
 
     function hasDefaultName(displayName, userId) {
         const m = /^\S+ ([0-9a-f]{4})$/.exec(displayName || '');
@@ -195,10 +220,13 @@
             name: hasDefaultName(displayName, userId),
             robot: avatarByName.get(displayName) === BOT_AVATAR
         };
-        // The checked rules the log can already answer must fit before the profile is worth a look.
+        // A checked default name must fit before the profile is worth a look. The avatar may be
+        // missing from the log, so the profile icon answers that one too.
         const togetherPossible = together.length > 0 && together.every((r) => !FROM_LOG.includes(r) || fromLog[r]);
-        // Matched from the log alone, a bot is blocked even after it left again.
-        const fromLogOnly = togetherPossible && together.some((r) => FROM_LOG.includes(r));
+        // Seen in the log with a default name AND the Robot, a bot is looked up and blocked even
+        // after it left again; anyone else only while still here.
+        const logSigns = together.filter((r) => r === 'name' || r === 'robot');
+        const fromLogOnly = togetherPossible && logSigns.length > 0 && logSigns.every((r) => fromLog[r]);
         const groupIds = !only || only.rule !== 'all' ? only?.groupIds || groups().map((g) => g.id) : groups().map((g) => g.id);
         // Everything else only looks at players still here: the startup replay of the log brings
         // back hours of joins, and checking all of those would flood the API.
@@ -220,11 +248,13 @@
             const days = user.date_joined ? (Date.now() - Date.parse(user.date_joined)) / 86400000 : Infinity;
             const fits = {
                 ...fromLog,
+                robot: fromLog.robot || wearsRobot(user),
                 visitor: !tags.includes('system_trust_basic'),
                 bio: bioMention(user, s.bioWords),
                 nuisance: tags.includes('system_troll'),
                 probable: tags.includes('system_probable_troll'),
-                age: days < s.ageDays
+                age: days < s.ageDays,
+                ageDays: days
             };
             let reason = null;
             if (togetherPossible && (fromLogOnly || here) && together.every((r) => fits[r])) {
@@ -239,15 +269,19 @@
                           ? `"${fits.bio}" in bio`
                           : RULE_LABELS[hit];
             }
+            let viaGroup = false;
             if (!reason && here && groupIds.length) {
                 const theirs = await queued(() => userGroupIds(userId));
                 const member = theirs.find((g) => groupIds.includes(g.id));
                 if (member) {
                     reason = `member of ${member.name}`;
+                    viaGroup = true;
                 }
             }
             if (reason) {
-                await block(displayName, userId, reason);
+                // Rule blocks are reported; group blocks only when the user asked for that too.
+                const reportIt = !viaGroup || s.reportGroups;
+                await block(displayName, userId, reason, reportIt ? groundsOf(fits) : null);
             }
         } catch (err) {
             console.warn(TAG, 'could not check', displayName, userId, err);
@@ -261,7 +295,9 @@
         }
     }
 
-    async function block(displayName, userId, reason) {
+    // `grounds`: what the player was caught on, reported to the shared list. `shared`: the block
+    // came from that list, so it is neither reported back nor announced.
+    async function block(displayName, userId, reason, grounds = null, shared = false) {
         if (DRY_RUN) {
             console.info(TAG, 'would block', displayName, userId, `(${reason})`);
             return;
@@ -271,14 +307,205 @@
             await window.request.playerModerationRequest.sendPlayerModeration({ moderated: userId, type: 'block' });
             remember(BLOCKED_KEY, { userId, displayName, reason, at: new Date().toISOString() });
             console.info(TAG, 'blocked', displayName, userId, `(${reason})`);
-            try {
-                AppApi.DesktopNotification('Bot Blocker', `Blocked ${displayName}: ${reason}`, '');
-            } catch {}
+            if (!shared) {
+                try {
+                    AppApi.DesktopNotification('Bot Blocker', `Blocked ${displayName}: ${reason}`, '');
+                } catch {}
+                if (grounds) {
+                    report(userId, displayName, grounds);
+                }
+            }
             renderPanel();
         } catch (err) {
             handled.delete(userId); // let a later join retry
             console.error(TAG, 'block failed for', displayName, userId, err);
         }
+    }
+
+    // ---- the shared blocklist ------------------------------------------------------------------
+    //
+    // Blocks go to vapi.omnicrash.net with what they were caught on; the server re-checks them
+    // and lists the ones that hold up. Every plugin syncs that list and blocks what's on it, one
+    // account at a time. When the server can't be reached nothing is shown: reports wait in a
+    // queue and syncing picks up again by itself.
+
+    const INSTALL_KEY = 'botBlocker.install';
+    const OUTBOX_KEY = 'botBlocker.outbox';
+    const SHARED_KEY = 'botBlocker.shared';
+    const SHARED_SEQ_KEY = 'botBlocker.sharedSeq';
+
+    function installId() {
+        let id = localStorage.getItem(INSTALL_KEY);
+        if (!id) {
+            id = crypto.randomUUID();
+            try {
+                localStorage.setItem(INSTALL_KEY, id);
+            } catch {}
+        }
+        return id;
+    }
+
+    // The facts behind a block, in the server's terms. Only what's true is sent.
+    function groundsOf(fits) {
+        const g = {};
+        for (const r of ['name', 'robot', 'visitor', 'nuisance', 'probable']) {
+            if (fits[r]) {
+                g[r] = true;
+            }
+        }
+        if (fits.bio) {
+            g.bio = fits.bio;
+        }
+        if (fits.age && Number.isFinite(fits.ageDays)) {
+            g.age = Math.max(0, Math.floor(fits.ageDays));
+        }
+        return g;
+    }
+
+    // The least a report needs: the default rule set (the server holds it to the same).
+    const meetsMinimum = (g) => (g.name && g.robot && g.visitor) || !!g.bio || !!g.nuisance;
+
+    function report(userId, displayName, grounds) {
+        if (!settings().share || !meetsMinimum(grounds)) {
+            return;
+        }
+        const outbox = loadList(OUTBOX_KEY);
+        outbox.push({ userId, displayName, grounds });
+        saveList(OUTBOX_KEY, outbox.slice(-500));
+        flushOutbox();
+    }
+
+    let flushing = false;
+    async function flushOutbox() {
+        if (flushing) {
+            return;
+        }
+        flushing = true;
+        try {
+            let outbox = loadList(OUTBOX_KEY);
+            while (outbox.length) {
+                const item = outbox[0];
+                let res;
+                try {
+                    res = await fetch(`${API}/reports`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ install: installId(), ...item })
+                    });
+                } catch {
+                    return; // offline: try again on the next round
+                }
+                // Only a real answer from the API counts: anything else (a proxy's error or a
+                // placeholder page while the server is away) keeps the report for later.
+                const body = res.status === 400 ? null : await res.json().catch(() => null);
+                if (res.status !== 400 && !(res.ok && body?.result)) {
+                    return;
+                }
+                // Taken, or refused for good (a 400): either way it leaves the queue.
+                outbox = loadList(OUTBOX_KEY).slice(1);
+                saveList(OUTBOX_KEY, outbox);
+            }
+        } finally {
+            flushing = false;
+        }
+    }
+
+    function sharedList() {
+        try {
+            return JSON.parse(localStorage.getItem(SHARED_KEY) || '{}');
+        } catch {
+            return {};
+        }
+    }
+
+    async function syncShared() {
+        if (!settings().share) {
+            return;
+        }
+        try {
+            const list = sharedList();
+            let since = Number(localStorage.getItem(SHARED_SEQ_KEY) || 0);
+            for (let page = 0; page < 50; page++) {
+                const res = await fetch(`${API}/list?since=${since}`);
+                if (!res.ok) {
+                    return;
+                }
+                const body = await res.json();
+                for (const e of body.added || []) {
+                    list[e.userId] = { displayName: e.displayName, grounds: e.grounds };
+                }
+                for (const id of body.removed || []) {
+                    delete list[id];
+                }
+                since = body.seq;
+                localStorage.setItem(SHARED_KEY, JSON.stringify(list));
+                localStorage.setItem(SHARED_SEQ_KEY, String(since));
+                if (!body.more) {
+                    break;
+                }
+            }
+            renderPanel();
+        } catch {}
+    }
+
+    // Whether this user's own rules would block an account with these grounds.
+    function rulesAllow(g, s) {
+        const fits = {
+            name: !!g.name,
+            robot: !!g.robot,
+            visitor: !!g.visitor,
+            bio: !!g.bio,
+            nuisance: !!g.nuisance,
+            probable: !!g.probable,
+            age: Number.isFinite(g.age) && g.age < s.ageDays
+        };
+        const on = RULES.filter((r) => s.rules[r].on);
+        const alone = on.filter((r) => s.rules[r].always);
+        const together = on.filter((r) => !s.rules[r].always);
+        return alone.some((r) => fits[r]) || (together.length > 0 && together.every((r) => fits[r]));
+    }
+
+    function isFriend(userId) {
+        return !!store('Friend')?.friends?.has?.(userId);
+    }
+
+    // One listed account per tick: the next one this user's rules allow, not already handled.
+    async function blockNextShared() {
+        const s = settings();
+        if (!s.share || DRY_RUN) {
+            return;
+        }
+        const list = sharedList();
+        for (const [userId, e] of Object.entries(list)) {
+            if (handled.has(userId) || (s.excludeFriends && isFriend(userId)) || !rulesAllow(e.grounds, s)) {
+                continue;
+            }
+            const why = Object.keys(e.grounds).map((r) => (r === 'bio' ? `"${e.grounds.bio}" in bio` : RULE_LABELS[r] || r));
+            await block(e.displayName, userId, `shared list: ${why.join(' + ')}`, null, true);
+            return;
+        }
+    }
+
+    // A fresh install's checkbox wins once; after that the switch on the page decides.
+    function applyInstallChoice() {
+        if (INSTALL_STAMP === 'dev' || localStorage.getItem('botBlocker.installStamp') === INSTALL_STAMP) {
+            return;
+        }
+        try {
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings(), share: SHARE_DEFAULT }));
+            localStorage.setItem('botBlocker.installStamp', INSTALL_STAMP);
+        } catch {}
+    }
+
+    function startShared() {
+        applyInstallChoice();
+        syncShared();
+        flushOutbox();
+        setInterval(() => {
+            syncShared();
+            flushOutbox();
+        }, SYNC_EVERY_MS);
+        setInterval(blockNextShared, SHARED_BLOCK_GAP_MS);
     }
 
     // ---- reading the game log ------------------------------------------------------------------
@@ -538,6 +765,14 @@
                               .join('')
                         : '<div class="bb-empty">No groups yet.</div>'
                 }</div>
+                <h3>Shared blocklist</h3>
+                <div class="bb-rule"><label>
+                    <input type="checkbox" data-act="share" ${s.share ? 'checked' : ''} />
+                    <span>Use and contribute</span></label>
+                    <span class="bb-muted">${Object.keys(sharedList()).length} accounts</span></div>
+                <div class="bb-rule"><label>
+                    <input type="checkbox" data-act="report-groups" ${s.reportGroups ? 'checked' : ''} ${s.share ? '' : 'disabled'} />
+                    <span>Also report group blocks</span></label></div>
                 </section>
                 <section>
                 <h3>Recently blocked</h3>
@@ -568,6 +803,11 @@
             box.onchange = () => setRule(box.dataset.always, 'always', box.checked);
         });
         panel.querySelector('[data-act="friends"]').onchange = (e) => setExcludeFriends(e.target.checked);
+        panel.querySelector('[data-act="share"]').onchange = (e) => {
+            setShare(e.target.checked);
+            renderPanel();
+        };
+        panel.querySelector('[data-act="report-groups"]').onchange = (e) => setReportGroups(e.target.checked);
         panel.querySelectorAll('[data-word]').forEach((btn) => {
             btn.onclick = () => {
                 setBioWords(settings().bioWords.filter((w) => w !== btn.dataset.word));
@@ -613,14 +853,45 @@
     // A copy of one of VRCX's own menu entries, so it looks and collapses exactly like the others.
     // People choose which entries their menu shows, so it goes at the end of the main menu (the
     // one with the most entries) rather than next to any particular one.
+    // VRCX's Manage entry (the gear): ours always sits right in front of it.
+    function settingsEntry() {
+        const gear = [...document.querySelectorAll('[data-sidebar="menu-item"] i.ri-settings-3-line')].pop();
+        return gear?.closest('[data-sidebar="menu-item"]') || null;
+    }
+
+    // Puts ours in front of the gear, or at the end of its menu when there is no gear.
+    function placeMenuEntry(entry) {
+        const gear = settingsEntry();
+        if (gear) {
+            if (gear.previousElementSibling !== entry) {
+                gear.before(entry);
+            }
+            return;
+        }
+        const last = [...entry.parentElement.querySelectorAll(':scope > [data-sidebar="menu-item"]')]
+            .filter((el) => el !== entry)
+            .pop();
+        if (last && last.nextElementSibling !== entry) {
+            last.after(entry);
+        }
+    }
+
     function ensureMenuEntry() {
-        if (document.querySelector('[data-bot-blocker-menu]')) {
+        const placed = document.querySelector('[data-bot-blocker-menu]');
+        if (placed) {
+            // VRCX adds and redraws entries as it goes; put ours back where it belongs.
+            placeMenuEntry(placed);
             return;
         }
         const menus = [...document.querySelectorAll('[data-sidebar="menu"]')];
         const items = (menu) => [...menu.querySelectorAll(':scope > [data-sidebar="menu-item"]')];
         const menu = menus.sort((a, b) => items(b).length - items(a).length)[0];
-        const model = menu && items(menu).filter((el) => el.querySelector('i[class*="ri-"]')).pop();
+        // Any plain entry will do as the model, just not the gear: that one opens a dropdown.
+        const model =
+            menu &&
+            items(menu)
+                .filter((el) => el.querySelector('i[class*="ri-"]') && !el.querySelector('i.ri-settings-3-line'))
+                .pop();
         if (!model) {
             logOnce('nomenu', `no menu entry to copy yet (${menus.length} menus)`);
             return;
@@ -650,7 +921,8 @@
             true
         );
         model.after(entry);
-        logOnce('menu', 'added the Bot Blocker menu entry');
+        placeMenuEntry(entry);
+        logOnce('menu', settingsEntry() ? 'added the Bot Blocker menu entry before Manage' : 'added the Bot Blocker menu entry');
     }
 
     // ---- UI: the toggle in VRCX's group dialog -------------------------------------------------
@@ -725,6 +997,7 @@
         wrapped.__botBlocker = true;
         service.parseRawGameLog = wrapped;
         watchUnblocks(window.request.playerModerationRequest);
+        startShared();
         console.info(TAG, 'watching joins', DRY_RUN ? '(dry run)' : '', `- ${groups().length} blocked group(s)`);
         return true;
     }
@@ -774,6 +1047,10 @@
         settings,
         setRule,
         setExcludeFriends,
+        setShare,
+        setReportGroups,
+        syncShared,
+        shared: sharedList,
         setAgeDays,
         setBioWords,
         addGroup: async (input) => addGroup(await resolveGroup(input)),

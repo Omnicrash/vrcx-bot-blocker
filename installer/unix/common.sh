@@ -28,10 +28,13 @@ bb_without_block() {
         }' "$1"
 }
 
-# bb_install <custom.js> <bot-blocker.js>
+# bb_install <custom.js> <bot-blocker.js> [share: 1|0]
+# Rewrites the two lines the installer owns: the shared-blocklist choice and the install stamp.
 bb_install() {
     target=$1
     plugin=$2
+    share=$( [ "${3:-1}" = 0 ] && echo false || echo true )
+    stamp=$(date +%s)000
     tmp="$target.tmp.$$"
     [ -f "$target" ] && cp -p "$target" "$target.bak"
     {
@@ -40,7 +43,11 @@ bb_install() {
             printf '%s\n\n' "$rest"
         fi
         printf '%s\n' "$BB_START"
-        LC_ALL=C awk '{ lines[++n] = $0 } END { while (n > 0 && lines[n] ~ /^[ \t\r]*$/) n--; for (i = 1; i <= n; i++) print lines[i] }' "$plugin"
+        LC_ALL=C awk -v share="$share" -v stamp="$stamp" '
+            /@SHARE_DEFAULT@/ { $0 = "    const SHARE_DEFAULT = " share "; // @SHARE_DEFAULT@" }
+            /@INSTALL_STAMP@/ { $0 = "    const INSTALL_STAMP = '\''" stamp "'\''; // @INSTALL_STAMP@" }
+            { lines[++n] = $0 }
+            END { while (n > 0 && lines[n] ~ /^[ \t\r]*$/) n--; for (i = 1; i <= n; i++) print lines[i] }' "$plugin"
         printf '%s\n' "$BB_END"
     } > "$tmp" && mv -f "$tmp" "$target"
 }

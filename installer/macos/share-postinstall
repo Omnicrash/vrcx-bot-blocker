@@ -1,0 +1,5 @@
+#!/bin/sh
+# The "shared blocklist" checkbox's part of the .pkg: installed first when ticked, it only leaves
+# a marker for the main part's postinstall, which reads and removes it.
+touch /tmp/net.omnicrash.vrcx-bot-blocker.share
+exit 0

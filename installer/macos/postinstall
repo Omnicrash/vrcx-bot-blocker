@@ -24,7 +24,13 @@ done
 chown -R "$user" "$ours"
 chmod +x "$ours/Uninstall VRCX Bot Blocker.command"
 
-as_user /bin/sh -c '. "$1/common.sh" && bb_install "$2/custom.js" "$1/bot-blocker.js"' sh "$ours" "$vrcx"
+# The shared-blocklist checkbox: its part of the package ran first and left a marker when ticked.
+marker=/tmp/net.omnicrash.vrcx-bot-blocker.share
+share=0
+[ -f "$marker" ] && share=1
+rm -f "$marker"
+
+as_user /bin/sh -c '. "$1/common.sh" && bb_install "$2/custom.js" "$1/bot-blocker.js" "$3"' sh "$ours" "$vrcx" "$share"
 
 # Restart VRCX when it runs, so the plugin loads now.
 if pgrep -x VRCX >/dev/null 2>&1; then

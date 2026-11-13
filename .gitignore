@@ -10,3 +10,7 @@ desktop.ini
 
 # Build output
 dist/
+
+# Server
+server/node_modules/
+server/data/
