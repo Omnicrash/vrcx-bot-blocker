@@ -16,7 +16,7 @@
 // Nobody is ever blocked twice: anyone this script blocked before, and anyone you unblock in
 // VRCX yourself, is left alone from then on.
 (function () {
-    const VERSION = '2.0.3'; // build.sh checks it against the VERSION file
+    const VERSION = '2.0.4'; // build.sh checks it against the VERSION file
     const UPDATE_KEY = 'botBlocker.update'; // a newer release, downloaded and its signature checked
 
     // A newer release the updater downloaded runs in place of this copy. If it fails to start,
@@ -1357,8 +1357,10 @@
         }
     }
 
-    // VRCX can put an entry's name straight next to its icon, so look at text, not elements.
-    const hasLabel = (el) => !!el.textContent.trim();
+    // The entry ours was copied from, as it looked then. VRCX changes its own entries when the
+    // menu collapses or expands (names hidden or shown), but never ours: when the model changes,
+    // ours is copied again.
+    let copiedFrom = '';
 
     function ensureMenuEntry() {
         const menus = [...document.querySelectorAll('[data-sidebar="menu"]')];
@@ -1372,9 +1374,7 @@
                 .pop();
         const placed = document.querySelector('[data-bot-blocker-menu]');
         if (placed) {
-            // A copy made while the menu was collapsed has no name: make it again once it expands,
-            // and the other way round.
-            if (!model || hasLabel(model) === hasLabel(placed)) {
+            if (!model || model.outerHTML === copiedFrom) {
                 // VRCX adds and redraws entries as it goes; put ours back where it belongs.
                 placeMenuEntry(placed);
                 return;
@@ -1385,6 +1385,7 @@
             logOnce('nomenu', `no menu entry to copy yet (${menus.length} menus)`);
             return;
         }
+        copiedFrom = model.outerHTML;
         const entry = model.cloneNode(true);
         entry.setAttribute('data-bot-blocker-menu', '');
         entry.querySelectorAll('[data-active]').forEach((el) => el.setAttribute('data-active', 'false'));
@@ -1639,7 +1640,13 @@
                 pending = true;
                 requestAnimationFrame(tick);
             }
-        }).observe(document.body, { childList: true, subtree: true });
+        }).observe(document.body, {
+            childList: true,
+            subtree: true,
+            // Collapsing the menu can only hide or show names, so attribute changes count too.
+            attributes: true,
+            attributeFilter: ['style', 'class', 'data-state', 'data-collapsible', 'hidden']
+        });
         tick();
     }
 
