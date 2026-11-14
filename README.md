@@ -73,7 +73,8 @@ The rules live on the **Bot Blocker** page in VRCX's side menu. Each one can be 
 | Robot avatar | on |
 | Account younger than a number of days (7 to start with) | on |
 | Visitor rank | off |
-| Bio mentions a word or site from your list, hexed.cc to start (also written `hexed(.)cc`, `hexed dot cc` and so on). Reads the bio, its links, the pronouns and the status text | on, always block |
+| Empty bio | off |
+| Bio, links, pronouns or status mention a word or site from your list, hexed.cc to start (also written `hexed(.)cc`, `hexed dot cc` and so on) | on, always block |
 | Nuisance rank | off |
 | Almost Nuisance rank | off |
 

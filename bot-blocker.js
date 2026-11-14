@@ -164,11 +164,12 @@
     // fit for a block; a checked rule with "always" blocks by itself. "Always" starts off for the
     // default name, the Robot avatar and Visitor rank: each of those alone catches real people.
     const SETTINGS_KEY = 'botBlocker.rules';
-    const RULES = ['name', 'robot', 'visitor', 'bio', 'nuisance', 'probable', 'age'];
+    const RULES = ['name', 'robot', 'visitor', 'nobio', 'bio', 'nuisance', 'probable', 'age'];
     const RULE_LABELS = {
         name: 'Default name',
         robot: 'Robot avatar',
         visitor: 'Visitor rank',
+        nobio: 'Empty bio',
         bio: 'in bio',
         nuisance: 'Nuisance',
         probable: 'Almost Nuisance',
@@ -197,6 +198,7 @@
             name: { on: true, always: false },
             robot: { on: true, always: false },
             visitor: { on: false, always: false },
+            nobio: { on: false, always: false },
             bio: { on: true, always: true },
             nuisance: { on: false, always: true },
             probable: { on: false, always: true },
@@ -229,10 +231,11 @@
     }
 
     // Settings that would block a lot of real people, as warnings for the page. Default name, the
-    // Robot avatar, Visitor rank and a new account each fit plenty of real people on their own, and
-    // Visitor rank and a new account fit almost every new player together, so those two count as one.
-    const WEAK_RULES = ['name', 'robot', 'visitor', 'age'];
-    const WEAK_TITLES = { name: 'Default display name', robot: 'Robot avatar', visitor: 'Visitor rank', age: 'Account younger than' };
+    // Robot avatar, Visitor rank, an empty bio and a new account each fit plenty of real people on
+    // their own, and the last three together fit almost every new player.
+    const WEAK_RULES = ['name', 'robot', 'visitor', 'nobio', 'age'];
+    const NEW_PLAYER_NAMES = { visitor: 'Visitor rank', nobio: 'an empty bio', age: 'a new account' };
+    const WEAK_TITLES = { name: 'Default display name', robot: 'Robot avatar', visitor: 'Visitor rank', nobio: 'Empty bio', age: 'Account younger than' };
     function riskWarnings(s) {
         const warnings = [];
         const on = (r) => s.rules[r].on;
@@ -242,8 +245,14 @@
         const together = WEAK_RULES.filter((r) => on(r) && !s.rules[r].always);
         if (together.length && s.needed <= 1) {
             warnings.push('With 1 needed, one rule is enough to block someone. That blocks a lot of real people.');
-        } else if (together.includes('visitor') && together.includes('age') && s.needed <= 2) {
-            warnings.push('Visitor rank and a new account fit almost every new player. With 2 needed, that blocks a lot of real people.');
+        } else {
+            // Visitor rank, an empty bio and a new account all describe a new player.
+            const newPlayer = ['visitor', 'nobio', 'age'].filter((r) => together.includes(r));
+            if (newPlayer.length >= 2 && s.needed <= newPlayer.length) {
+                const names = newPlayer.map((r) => NEW_PLAYER_NAMES[r]);
+                const list = names.length === 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+                warnings.push(`${list[0].toUpperCase()}${list.slice(1)} fit almost every new player. With ${s.needed} needed, that blocks a lot of real people.`);
+            }
         }
         if (!s.excludeFriends) {
             warnings.push('Your friends can be blocked too.');
@@ -396,6 +405,7 @@
                 ...fromLog,
                 robot: fromLog.robot || wearsRobot(user),
                 visitor: !tags.includes('system_trust_basic'),
+                nobio: !(user.bio || '').trim(),
                 bio: bioMention(user, s.bioWords),
                 nuisance: tags.includes('system_troll'),
                 probable: tags.includes('system_probable_troll'),
@@ -1158,7 +1168,8 @@
                 ${ruleRow('age', `Account younger than
                     <input class="bb-input bb-days" type="number" min="1" max="3650" value="${s.ageDays}" /> days`)}
                 ${ruleRow('visitor', 'Visitor rank')}
-                ${ruleRow('bio', 'Bio mentions')}
+                ${ruleRow('nobio', 'Empty bio')}
+                ${ruleRow('bio', 'Bio, links, pronouns or status mention')}
                 <div class="bb-words">
                     ${s.bioWords
                         .map((w) => `<span class="bb-chip">${esc(w)}<button data-word="${esc(w)}" title="Remove">
@@ -1169,7 +1180,7 @@
                 ${ruleRow('nuisance', 'Nuisance')}
                 ${ruleRow('probable', 'Almost Nuisance')}
                 <div class="bb-rule">At least
-                    <input class="bb-input bb-days" data-act="needed" type="number" min="1" max="7" value="${s.needed}" />
+                    <input class="bb-input bb-days" data-act="needed" type="number" min="1" max="${RULES.length}" value="${s.needed}" />
                     of the checked rules without Always</div>
                 <div class="bb-risks">${riskWarnings(s).map((w) => `<div>${esc(w)}</div>`).join('')}</div>
                 <h3>Blocked groups</h3>
