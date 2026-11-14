@@ -39,7 +39,12 @@
             localStorage.removeItem(UPDATE_KEY); // an installer put a newer version in place since
         }
     }
-    window.botBlockerVersion = VERSION;
+    // VRCNext loads Bot Blocker as a theme. Switching the theme off and on again runs this file a
+    // second time; VRCX can rerun custom.js too. The copy that's already running carries on.
+    if (window.botBlocker?.resume) {
+        window.botBlocker.resume();
+        return;
+    }
 
     function newerVersion(a, b) {
         const pa = String(a).split('.').map(Number);
@@ -53,6 +58,9 @@
     }
 
     const DRY_RUN = false; // true: only log what would be blocked
+    // VRCNext runs Bot Blocker as a theme script; its page has these two, VRCX's doesn't.
+    const IN_VRCNEXT = typeof window.sendToCS === 'function' && typeof window.external?.receiveMessage === 'function';
+    const APP = IN_VRCNEXT ? 'VRCNext' : 'VRCX';
     const BOT_AVATAR = 'Robot';
     const BLOCKED_KEY = 'botBlocker.blocked';
     const UNBLOCKED_KEY = 'botBlocker.unblocked';
@@ -343,10 +351,16 @@
     }
 
     async function getUser(userId) {
+        if (IN_VRCNEXT) {
+            return vnGetUser(userId);
+        }
         return (await window.request.userRequest.getUser({ userId })).json;
     }
 
     async function userGroupIds(userId) {
+        if (IN_VRCNEXT) {
+            return ((await vnDetail(userId)).userGroups || []).map((g) => ({ id: g.id, name: g.name }));
+        }
         const list = (await window.request.groupRequest.getGroups({ userId })).json || [];
         return list.map((g) => ({ id: g.groupId, name: g.name }));
     }
@@ -482,14 +496,18 @@
         }
         handled.add(userId);
         try {
-            await window.request.playerModerationRequest.sendPlayerModeration({ moderated: userId, type: 'block' });
+            await (IN_VRCNEXT ? vnBlock(userId) : window.request.playerModerationRequest.sendPlayerModeration({ moderated: userId, type: 'block' }));
             remember(BLOCKED_KEY, { userId, displayName, reason, at: new Date().toISOString(), ...(personal ? { personal: true } : {}) });
             console.info(TAG, 'blocked', displayName, userId, `(${reason})`);
             if (shared) {
                 saveList(SHARED_BLOCKS_KEY, [...new Set([...loadList(SHARED_BLOCKS_KEY), userId])]);
             } else {
                 try {
-                    AppApi.DesktopNotification('Bot Blocker', `Blocked ${displayName}: ${reason}`, '');
+                    if (IN_VRCNEXT) {
+                        window.showToast?.(true, `Bot Blocker blocked ${displayName}: ${reason}`);
+                    } else {
+                        AppApi.DesktopNotification('Bot Blocker', `Blocked ${displayName}: ${reason}`, '');
+                    }
                 } catch {}
                 if (grounds) {
                     report(userId, displayName, grounds, caughtBy);
@@ -975,6 +993,12 @@
         const text = (input || '').trim();
         const byId = /grp_[0-9a-f-]{36}/i.exec(text);
         let groupId = byId?.[0];
+        if (!groupId && IN_VRCNEXT) {
+            throw new Error('In VRCNext, paste a group link or a grp_ id.');
+        }
+        if (IN_VRCNEXT) {
+            return vnGroup(groupId);
+        }
         if (!groupId) {
             const code = /([A-Za-z0-9]{3,6})\.(\d{4})\s*$/.exec(text);
             if (!code) {
@@ -1095,6 +1119,13 @@
                 border: 1px solid var(--border); border-radius: var(--radius, .375rem);
                 box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
             .bb-toast span { flex: 1; }
+            /* VRCNext names its colors differently. */
+            .bb-vrcnext { --background: var(--bg-card); --card: var(--bg-card); --popover: var(--bg-card);
+                --foreground: var(--tx0); --popover-foreground: var(--tx0); --muted-foreground: var(--tx2);
+                --border: var(--brd); --primary: var(--accent); --primary-foreground: #fff;
+                --destructive: var(--err); --ring: var(--accent); --radius: 8px; color: var(--tx0); }
+            .bb-vrcnext .bb-input { background: var(--bg-input, var(--bg-card)); color: var(--tx0);
+                border: 1px solid var(--brd); border-radius: 6px; }
         `;
         document.head.appendChild(css);
     }
@@ -1108,6 +1139,12 @@
         }
     }
 
+    // VRCX draws Remix icons, VRCNext Material Symbols.
+    const ICONS = { robot: ['ri-robot-2-line', 'smart_toy'], close: ['ri-close-line', 'close'] };
+    const icon = (name, size) =>
+        IN_VRCNEXT
+            ? `<span class="msi"${size ? ` style="font-size:${size}px"` : ''}>${ICONS[name][1]}</span>`
+            : `<i class="${ICONS[name][0]}"${size ? ` style="font-size:${size}px"` : ''}></i>`;
     const capitalize = (t) => t.charAt(0).toUpperCase() + t.slice(1);
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -1119,7 +1156,7 @@
         addStyles();
         if (!panel) {
             panel = document.createElement('div');
-            panel.className = 'bb-overlay';
+            panel.className = IN_VRCNEXT ? 'bb-overlay bb-vrcnext' : 'bb-overlay';
             panel.addEventListener('mousedown', (e) => e.target === panel && closePanel());
             document.addEventListener('keydown', (e) => e.key === 'Escape' && panel?.isConnected && closePanel());
         }
@@ -1153,9 +1190,9 @@
         panel.innerHTML = `
             <div class="bb-card">
                 <div class="bb-head">
-                    <i class="ri-robot-2-line" style="font-size:20px"></i>
+                    ${icon('robot', 20)}
                     <h2>Bot Blocker</h2>
-                    <button class="bb-btn bb-ghost" data-act="close" title="Close"><i class="ri-close-line"></i></button>
+                    <button class="bb-btn bb-ghost" data-act="close" title="Close">${icon('close')}</button>
                 </div>
                 <div class="bb-cols">
                 <section>
@@ -1173,7 +1210,7 @@
                 <div class="bb-words">
                     ${s.bioWords
                         .map((w) => `<span class="bb-chip">${esc(w)}<button data-word="${esc(w)}" title="Remove">
-                            <i class="ri-close-line"></i></button></span>`)
+                            ${icon('close')}</button></span>`)
                         .join('')}
                     <form class="bb-word-add"><input class="bb-input" placeholder="Keyword or website" /></form>
                 </div>
@@ -1197,7 +1234,7 @@
                                     <span class="bb-name">${esc(g.name)}</span>
                                     <span class="bb-muted">${esc(g.code)}</span>
                                     <button class="bb-btn bb-ghost" data-act="remove" data-id="${esc(g.id)}" title="Remove">
-                                        <i class="ri-close-line"></i></button></div>`
+                                        ${icon('close')}</button></div>`
                               )
                               .join('')
                         : '<div class="bb-empty">No groups yet.</div>'
@@ -1220,7 +1257,7 @@
                     <span class="bb-muted">${esc(VERSION)}</span></div>
                 ${
                     readyUpdate()
-                        ? `<div class="bb-rule"><span>${esc(readyUpdate())} is ready. Restart VRCX to update.</span>
+                        ? `<div class="bb-rule"><span>${esc(readyUpdate())} is ready. Restart ${APP} to update.</span>
                             <button class="bb-btn" data-act="restart">Restart</button></div>`
                         : `<div class="bb-rule"><button class="bb-btn" data-act="check-update">Check for updates</button>
                             <span class="bb-muted bb-update-result"></span></div>`
@@ -1488,6 +1525,289 @@
 
     // ---- start ---------------------------------------------------------------------------------
 
+    // ---- VRCNext -------------------------------------------------------------------------------
+    //
+    // VRCNext runs Bot Blocker as a theme: a script in %AppData%\VRCNext\custom-themes, which its
+    // updates leave alone. Its page code is no public interface, so everything here uses the page
+    // functions and messages VRCNext's own screens use, and logs once when one of them is missing.
+    // - Players: VRCNext sends its page the instance's player list on every join and leave, with
+    //   trust rank, join date, bio, links, pronouns, status, profile picture and avatar name.
+    // - Profiles: its profile lookup also brings groups and friendship. Its own profile window
+    //   draws every answer, so the answers Bot Blocker asked for are kept from it.
+    // - Blocks and unblocks go through the same commands as VRCNext's Block and Unblock buttons.
+    const VN_TIMEOUT_MS = 15000;
+    const vn = {
+        installed: false,
+        stopped: false,
+        location: null,
+        players: new Map(), // user id -> VRCNext's entry for them in the player list
+        details: new Map(), // user id -> { promise, at }, profile lookups
+        waiting: new Map(), // user id -> resolve, a profile lookup waiting for its answer
+        hidden: new Set(), // user ids whose profile answers VRCNext's profile window doesn't get
+        blocking: new Map(), // user id -> settle, a block waiting for VRCNext to confirm it
+        groups: new Map(), // group id -> resolve, a group lookup waiting for its answer
+        quiet: new Set() // Bot Blocker's own unblocks, kept off the never-block-again list
+    };
+
+    function vnInstall() {
+        if (vn.installed) {
+            return true;
+        }
+        if (typeof window.sendToCS !== 'function' || typeof window.external?.receiveMessage !== 'function') {
+            return false;
+        }
+        vn.installed = true;
+        for (const name of ['renderFriendDetail', 'patchFriendProfileFacts']) {
+            const original = window[name];
+            if (typeof original !== 'function') {
+                logOnce(`vn-${name}`, `VRCNext has no ${name}: profile lookups may open profile windows`);
+                continue;
+            }
+            window[name] = function (d) {
+                if (d && vn.hidden.has(d.id)) {
+                    return;
+                }
+                return original.apply(this, arguments);
+            };
+        }
+        // Every unblock in VRCNext goes through sendToCS: one made by hand lands on the
+        // never-block-again list, Bot Blocker's own (undoing a shared-list block) doesn't.
+        const send = window.sendToCS;
+        window.sendToCS = function (message) {
+            if (message?.action === 'vrcUnblock' && message.userId && !vn.quiet.delete(message.userId)) {
+                handled.add(message.userId);
+                remember(UNBLOCKED_KEY, { userId: message.userId, at: new Date().toISOString() });
+                console.info(TAG, 'unblocked by you, will never block again:', message.userId);
+            }
+            return send.apply(this, arguments);
+        };
+        unblockQuietly = async ({ moderated }) => {
+            vn.quiet.add(moderated);
+            window.sendToCS({ action: 'vrcUnblock', userId: moderated });
+        };
+        window.external.receiveMessage((raw) => {
+            if (vn.stopped) {
+                return;
+            }
+            try {
+                const { type, payload } = JSON.parse(raw);
+                vnMessage(type, payload || {});
+            } catch (err) {
+                console.error(TAG, err);
+            }
+        });
+        readSettingsFile().then(() => {
+            startShared();
+            window.sendToCS({ action: 'vrcGetCurrentInstance' });
+            console.info(TAG, 'watching joins in VRCNext', DRY_RUN ? '(dry run)' : '', `- ${groups().length} blocked group(s)`);
+        });
+        return true;
+    }
+
+    function vnMessage(type, p) {
+        if (type === 'vrcCurrentInstance') {
+            vnPlayers(p);
+        } else if (type === 'vrcFriendDetail' && p.id) {
+            vn.waiting.get(p.id)?.(p);
+        } else if (type === 'vrcModDone' && p.type === 'block' && p.active) {
+            vn.blocking.get(p.userId)?.(true);
+        } else if (type === 'vrcActionResult' && p.action === 'block' && !p.success) {
+            // A failed block doesn't say whose: it's the oldest one still waiting.
+            vn.blocking.values().next().value?.(false);
+        } else if (type === 'vrcGroupDetail' && p.id) {
+            vn.groups.get(p.id)?.(p);
+        }
+    }
+
+    // The player list replaces the game log: who's here, who joined, who left, and avatar names.
+    function vnPlayers(p) {
+        if (!Array.isArray(p.users)) {
+            if (p.empty) {
+                present.clear();
+                vn.players.clear();
+            }
+            return;
+        }
+        if (p.location !== vn.location) {
+            vn.location = p.location;
+            present.clear();
+            avatarByName.clear();
+            vn.players.clear();
+        }
+        const me = typeof currentVrcUser !== 'undefined' ? currentVrcUser?.id : null;
+        const here = new Set();
+        for (const u of p.users) {
+            if (!u?.id || u.id === me) {
+                continue;
+            }
+            here.add(u.id);
+            vn.players.set(u.id, u);
+            if (u.avatarName) {
+                avatarByName.set(u.displayName, u.avatarName);
+            }
+            if (!present.has(u.id)) {
+                present.set(u.id, u.displayName);
+                evaluate(u.displayName, u.id);
+            }
+        }
+        for (const id of [...present.keys()]) {
+            if (!here.has(id)) {
+                present.delete(id);
+            }
+        }
+    }
+
+    function vnIsFriend(userId) {
+        try {
+            if (typeof vrcFriendsLoaded !== 'undefined' && vrcFriendsLoaded && typeof vrcFriendsData !== 'undefined') {
+                return vrcFriendsData.some((f) => f.id === userId);
+            }
+        } catch {}
+        return null; // not known yet: the profile lookup says
+    }
+
+    // VRCNext's profile lookup. It answers from its cache first and again once VRChat replied;
+    // the first answer does, and its profile window gets neither.
+    function vnDetail(userId) {
+        const known = vn.details.get(userId);
+        if (known && Date.now() - known.at < 60000) {
+            return known.promise;
+        }
+        const promise = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                vn.waiting.delete(userId);
+                reject(new Error('VRCNext sent no profile'));
+            }, VN_TIMEOUT_MS);
+            vn.waiting.set(userId, (d) => {
+                clearTimeout(timer);
+                vn.waiting.delete(userId);
+                resolve(d);
+            });
+            vn.hidden.add(userId);
+            setTimeout(() => vn.hidden.delete(userId), 2 * VN_TIMEOUT_MS);
+            window.sendToCS({ action: 'vrcGetFriendDetail', userId });
+        });
+        promise.catch(() => vn.details.delete(userId));
+        vn.details.set(userId, { promise, at: Date.now() });
+        return promise;
+    }
+
+    // In VRChat's own shape, like VRCX's lookups: the rules read it the same way.
+    async function vnGetUser(userId) {
+        const listed = vn.players.get(userId);
+        let friend = vnIsFriend(userId);
+        let u = listed;
+        if (!listed || !Array.isArray(listed.tags) || !listed.dateJoined || friend === null) {
+            u = { ...(await vnDetail(userId)), ...(listed || {}) };
+            friend ??= !!u.isFriend;
+        }
+        return {
+            id: userId,
+            displayName: u.displayName,
+            tags: u.tags || [],
+            date_joined: u.dateJoined || u.rawJson?.date_joined,
+            bio: u.bio || '',
+            bioLinks: u.bioLinks || [],
+            pronouns: u.pronouns || '',
+            statusDescription: u.statusDescription || '',
+            iconUrl: u.image || '',
+            isFriend: !!friend
+        };
+    }
+
+    function vnBlock(userId) {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => settle(false), VN_TIMEOUT_MS);
+            const settle = (ok) => {
+                clearTimeout(timer);
+                vn.blocking.delete(userId);
+                ok ? resolve() : reject(new Error('VRCNext did not block'));
+            };
+            vn.blocking.set(userId, settle);
+            window.sendToCS({ action: 'vrcBlock', userId });
+        });
+    }
+
+    function vnGroup(groupId) {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                vn.groups.delete(groupId);
+                reject(new Error('No group found with that id.'));
+            }, VN_TIMEOUT_MS);
+            vn.groups.set(groupId, (g) => {
+                clearTimeout(timer);
+                vn.groups.delete(groupId);
+                resolve({ id: g.id, name: g.name, code: g.shortCode && g.discriminator ? `${g.shortCode}.${g.discriminator}` : '' });
+            });
+            window.sendToCS({ action: 'vrcGetGroup', groupId });
+        });
+    }
+
+    // A Bot Blocker entry in VRCNext's menu, in its Tools folder. A click opens the Bot Blocker
+    // page over VRCNext's own instead of switching tabs.
+    const VN_NAV_KEY = 'bot-blocker';
+    function vnMenu() {
+        try {
+            if (typeof NAV_ITEMS_DEF === 'undefined' || typeof navRender !== 'function') {
+                logOnce('vn-nav', 'VRCNext has no menu to add Bot Blocker to');
+                return;
+            }
+            if (!NAV_ITEMS_DEF[VN_NAV_KEY]) {
+                NAV_ITEMS_DEF[VN_NAV_KEY] = { icon: 'smart_toy', tab: 999, label: 'Bot Blocker', defaultFolder: 'folder-tools' };
+                // A menu you rearranged gets new entries added to it; the built-in layout, used
+                // until you do, needs the entry put in by hand.
+                const tools = typeof NAV_DEFAULT_LAYOUT !== 'undefined' && NAV_DEFAULT_LAYOUT.find((e) => e.id === 'folder-tools');
+                if (tools && !tools.items.includes(VN_NAV_KEY)) {
+                    tools.items.push(VN_NAV_KEY);
+                }
+                navRender();
+            }
+            if (!vn.menuClick) {
+                vn.menuClick = (e) => {
+                    if (!vn.stopped && e.target.closest?.(`[data-nav-key="${VN_NAV_KEY}"]`)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.closeNavFolderPopout?.(); // the Tools folder's pop-up
+                        openPanel();
+                    }
+                };
+                document.addEventListener('click', vn.menuClick, true);
+            }
+            logOnce('vn-menu', 'added Bot Blocker to the VRCNext menu');
+        } catch (err) {
+            console.error(TAG, 'menu', err);
+        }
+    }
+
+    // Switching the theme off stops Bot Blocker; switching it on again resumes the same copy.
+    function vnStop() {
+        vn.stopped = true;
+        closePanel();
+        try {
+            delete NAV_ITEMS_DEF[VN_NAV_KEY];
+            const tools = NAV_DEFAULT_LAYOUT.find((e) => e.id === 'folder-tools');
+            if (tools) {
+                tools.items = tools.items.filter((key) => key !== VN_NAV_KEY);
+            }
+            navRender();
+        } catch {}
+        console.info(TAG, 'stopped: the Bot Blocker theme was switched off');
+    }
+
+    function vnResume() {
+        if (!vn.stopped) {
+            return;
+        }
+        vn.stopped = false;
+        vnMenu();
+        window.sendToCS({ action: 'vrcGetCurrentInstance' });
+        console.info(TAG, 'resumed');
+    }
+
+    if (IN_VRCNEXT) {
+        document.documentElement.addEventListener('vrcnext:theme:unload:Bot Blocker', vnStop);
+    }
+
     // ---- updates ---------------------------------------------------------------------------------
     // New releases come from GitHub. A release only runs if it carries a signature from the
     // release key, which isn't on GitHub: taking over the repository isn't enough to ship code.
@@ -1555,11 +1875,11 @@
         updateShown = true;
         addStyles();
         const notice = document.createElement('div');
-        notice.className = 'bb-toast';
+        notice.className = IN_VRCNEXT ? 'bb-toast bb-vrcnext' : 'bb-toast';
         notice.setAttribute('role', 'status');
-        notice.innerHTML = `<span>Bot Blocker ${esc(version)} is ready. Restart VRCX to update.</span>
+        notice.innerHTML = `<span>Bot Blocker ${esc(version)} is ready. Restart ${APP} to update.</span>
             <button class="bb-btn" data-act="restart">Restart</button>
-            <button class="bb-btn bb-ghost" data-act="close" title="Close"><i class="ri-close-line"></i></button>`;
+            <button class="bb-btn bb-ghost" data-act="close" title="Close">${icon('close')}</button>`;
         notice.querySelector('[data-act="restart"]').onclick = restartVrcx;
         notice.querySelector('[data-act="close"]').onclick = () => notice.remove();
         document.body.appendChild(notice);
@@ -1568,6 +1888,10 @@
     // VRCX's own restart. On Windows it starts a new VRCX and exits; without the upgrade flag the
     // new one sees this one still running, hands over to it and quits, and nothing is left.
     async function restartVrcx() {
+        if (IN_VRCNEXT) {
+            window.sendToCS({ action: 'restartApp' });
+            return;
+        }
         try {
             await window.VRCXStorage?.Save?.();
         } catch {}
@@ -1594,6 +1918,9 @@
     }
 
     function installHooks() {
+        if (IN_VRCNEXT) {
+            return vnInstall();
+        }
         const service = window.gameLogService;
         if (!service?.parseRawGameLog || !window.request?.playerModerationRequest || !window.request?.groupRequest) {
             return false;
@@ -1624,7 +1951,6 @@
         readSettingsFile().then(() => {
             early.splice(0).forEach(safeInspect);
             startShared();
-            startUpdates();
             renderPanel();
             console.info(TAG, 'watching joins', DRY_RUN ? '(dry run)' : '', `- ${groups().length} blocked group(s)`);
         });
@@ -1632,6 +1958,10 @@
     }
 
     function installUi() {
+        if (IN_VRCNEXT) {
+            vnMenu();
+            return;
+        }
         if (!document.body) {
             return;
         }
@@ -1669,6 +1999,8 @@
         }
     }, 1000);
     installHooks() && clearInterval(timer);
+    // Updates don't wait for the hooks: a version that can't hook in can still fetch its fix.
+    startUpdates();
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', installUi);
     } else {
@@ -1694,6 +2026,9 @@
         open: openPanel,
         checkForUpdate,
         risks: () => riskWarnings(settings()),
-        hasDefaultName
+        hasDefaultName,
+        resume: () => IN_VRCNEXT && vnResume()
     };
+    // Set last: a downloaded version counts as started only once everything above ran.
+    window.botBlockerVersion = VERSION;
 })();
