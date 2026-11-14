@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!--
-  Unraid container template for the VRCX Bot Blocker API (server/deploy/README.md).
+  Unraid container template for the VRC Bot Blocker API (server/deploy/README.md).
   Installed as /boot/config/plugins/dockerMan/templates-user/my-VrcxBotBlocker.xml on xdisk, with
   the VRChat login filled in there - it is never in git.
 -->
@@ -15,7 +15,7 @@
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
   <Overview>
-    The shared blocklist for the VRCX Bot Blocker plugin: takes reports, re-checks them on VRChat
+    The shared blocklist for the VRC Bot Blocker plugin: takes reports, re-checks them on VRChat
     and hands the list to every plugin. Behind NPMplus as vapi.omnicrash.net, public.
   </Overview>
   <Category>Tools:</Category>

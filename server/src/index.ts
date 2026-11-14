@@ -20,4 +20,4 @@ Bun.serve({
         return fromDocker(address) ? admin.fetch(req) : new Response('Forbidden', { status: 403 })
     }
 })
-console.log(`VRCX Bot Blocker API ${VERSION} on :${PORT}, management on :${ADMIN_PORT}`)
+console.log(`VRC Bot Blocker API ${VERSION} on :${PORT}, management on :${ADMIN_PORT}`)

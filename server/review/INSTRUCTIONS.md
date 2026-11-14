@@ -1,4 +1,4 @@
-# Daily review of the VRCX Bot Blocker shared list
+# Daily review of the VRC Bot Blocker shared list
 
 You review the shared blocklist once a day. The list blocks VRChat accounts for every plugin
 user, so a real person on it gets blocked by many people at once. Your job is to catch those

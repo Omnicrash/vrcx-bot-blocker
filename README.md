@@ -1,9 +1,10 @@
-# VRCX Bot Blocker
+# VRC Bot Blocker
 
 Lately VRChat has been full of bots and bot groups quietly collecting data on everyone they meet.
-VRCX Bot Blocker gets rid of them: it blocks them the moment they join your instance.
+VRC Bot Blocker gets rid of them: it blocks them the moment they join your instance.
 
-It's a plugin for [VRCX](https://github.com/vrcx-team/VRCX) and works on Windows, macOS and Linux.
+It's a plugin for [VRCX](https://github.com/vrcx-team/VRCX) on Windows, macOS and Linux, and for
+[VRCNext](https://vrcnext.com/) on Windows.
 
 ## Install
 
@@ -16,8 +17,8 @@ Download the file for your system from the
 | macOS | `VRCX-Bot-Blocker-<version>-macos.pkg` | Open it and click through. |
 | Linux | `VRCX-Bot-Blocker-<version>-linux.sh` | Run `sh VRCX-Bot-Blocker-<version>-linux.sh` in a terminal. |
 
-If VRCX is running, the installer restarts it at the end so the plugin loads. VRChat itself
-keeps running.
+The Windows setup installs it in VRCX and in VRCNext, whichever you have. If one of them is
+running, the setup restarts it at the end so the plugin loads. VRChat itself keeps running.
 
 The installers aren't signed, so the first time your system may warn about them:
 
@@ -25,8 +26,8 @@ The installers aren't signed, so the first time your system may warn about them:
 - **macOS:** macOS says it can't verify the developer. Open **System Settings > Privacy &
   Security**, scroll down and click **Open Anyway**.
 
-Bot Blocker updates itself. It checks GitHub for new versions when VRCX starts and every 6 hours,
-and a new version runs from the next time VRCX starts. **Check for updates** on the Bot Blocker
+Bot Blocker updates itself. It checks GitHub for new versions when VRCX or VRCNext starts and
+every 6 hours, and a new version runs from the next time it starts. **Check for updates** on the Bot Blocker
 page checks right away. To update by hand instead, switch off **Update automatically** on the Bot
 Blocker page and install the newer version over the old one.
 
@@ -44,16 +45,26 @@ restart VRCX.
 
 ## Uninstall
 
-- **Windows:** uninstall **VRCX Bot Blocker** from **Settings > Apps**.
+- **Windows:** uninstall **VRC Bot Blocker** from **Settings > Apps**.
 - **macOS:** double-click **Uninstall VRCX Bot Blocker** in
   `~/Library/Application Support/VRCX Bot Blocker`.
 - **Linux:** run the installer again with `--uninstall`.
 
 Players it already blocked stay blocked.
 
+## VRCNext
+
+In VRCNext, Bot Blocker is a theme: `%AppData%\VRCNext\custom-themes\Bot Blocker`, switched on
+in VRCNext's theme settings. VRCNext's own updates leave it alone. Open it from **Tools > Bot
+Blocker** in VRCNext's menu. It works the same as in VRCX, with two differences:
+
+- Groups are added by their link or `grp_` ID. VRCNext can't look a group up by its code.
+- Turning the theme off in VRCNext's settings turns Bot Blocker off.
+
 ## Blocking groups
 
-Open **Bot Blocker** in VRCX's side menu, the robot just above the settings gear. Paste a group
+Open **Bot Blocker** in VRCX's side menu, the robot just above the settings gear, or under
+**Tools** in VRCNext. Paste a group
 link, its `grp_` ID or its code (like `ABCD.1234`) and click **Add**. Or open the group in VRCX
 and click **Auto-block members** at the top of its window.
 

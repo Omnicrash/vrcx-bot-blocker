@@ -1,4 +1,4 @@
-// VRCX Bot Blocker - https://github.com/Omnicrash/vrcx-bot-blocker (MIT)
+// VRC Bot Blocker - https://github.com/Omnicrash/vrcx-bot-blocker (MIT)
 // Lives in %AppData%\VRCX\custom.js, which VRCX runs once at startup; the setup puts it there.
 //
 // A player gets blocked the moment they join when the rules on the Bot Blocker page fit:
@@ -16,7 +16,7 @@
 // Nobody is ever blocked twice: anyone this script blocked before, and anyone you unblock in
 // VRCX yourself, is left alone from then on.
 (function () {
-    const VERSION = '2.0.4'; // build.sh checks it against the VERSION file
+    const VERSION = '2.5.0'; // build.sh checks it against the VERSION file
     const UPDATE_KEY = 'botBlocker.update'; // a newer release, downloaded and its signature checked
 
     // A newer release the updater downloaded runs in place of this copy. If it fails to start,
@@ -839,7 +839,10 @@
                 }
                 let user = null;
                 try {
-                    user = await queued(() => getUser(userId));
+                    // VRCNext's profile lookup costs several VRChat requests; all a shared-list
+                    // block needs is whether they're a friend, which its friend list already says.
+                    const friend = IN_VRCNEXT ? vnIsFriend(userId) : null;
+                    user = friend === null ? await queued(() => getUser(userId)) : { id: userId, isFriend: friend };
                 } catch {}
                 if (!user) {
                     skipShared(userId);

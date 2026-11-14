@@ -23,4 +23,4 @@ fi
 
 rm -rf "$HOME/Library/Application Support/VRCX Bot Blocker"
 pkgutil --pkgs 2>/dev/null | grep -q '^net.omnicrash.vrcx-bot-blocker$' && echo "(The installer's receipt stays in macOS's package list; it is harmless.)"
-echo "VRCX Bot Blocker is removed. You can close this window."
+echo "VRC Bot Blocker is removed. You can close this window."

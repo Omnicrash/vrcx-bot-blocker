@@ -1,5 +1,5 @@
 #!/bin/sh
-# VRCX Bot Blocker installer for Linux - https://github.com/Omnicrash/vrcx-bot-blocker (MIT)
+# VRC Bot Blocker installer for Linux - https://github.com/Omnicrash/vrcx-bot-blocker (MIT)
 #
 #   sh vrcx-bot-blocker-linux.sh              install or update
 #   sh vrcx-bot-blocker-linux.sh --uninstall  take it out again
@@ -51,7 +51,7 @@ target="$dir/custom.js"
 
 if [ "${1:-}" = "--uninstall" ]; then
     bb_uninstall "$target"
-    say "VRCX Bot Blocker is removed. Players it already blocked stay blocked."
+    say "VRC Bot Blocker is removed. Players it already blocked stay blocked."
     restart_vrcx
     exit 0
 fi
@@ -91,6 +91,6 @@ if [ -f "$target" ] && grep -q "^$BB_START_PREFIX" "$target" && [ -t 0 ]; then
 fi
 
 bb_install "$target" "$plugin" "$share" "$reset"
-say "VRCX Bot Blocker $VERSION is installed in $target"
+say "VRC Bot Blocker $VERSION is installed in $target"
 restart_vrcx
 say "Done. To remove it later: sh $(basename "$0") --uninstall"
